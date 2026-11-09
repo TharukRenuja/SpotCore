@@ -1,0 +1,280 @@
+{
+  "track": {
+    "uri": "spotify:track:0aWMVrwxPNYkKmFthzmpRi",
+    "name": "Blue in Green (feat. John Coltrane & Bill Evans)",
+    "duration": {
+      "totalMilliseconds": 337733
+    },
+    "trackNumber": 3,
+    "contentRating": {
+      "label": "NONE"
+    },
+    "playability": {
+      "playable": true,
+      "reason": "PLAYABLE"
+    },
+    "firstArtist": {
+      "items": [
+        {
+          "uri": "spotify:artist:0kbYTNQb4Pb1rPbbaF0pT4",
+          "id": "0kbYTNQb4Pb1rPbbaF0pT4",
+          "profile": {
+            "name": "Miles Davis"
+          }
+        }
+      ]
+    },
+    "otherArtists": {
+      "items": [
+        {
+          "uri": "spotify:artist:2hGh5VOeeqimQFxqXvfCUf",
+          "id": "2hGh5VOeeqimQFxqXvfCUf",
+          "profile": {
+            "name": "John Coltrane"
+          }
+        },
+        {
+          "uri": "spotify:artist:4jXfFzeP66Zy67HM2mvIIF",
+          "id": "4jXfFzeP66Zy67HM2mvIIF",
+          "profile": {
+            "name": "Bill Evans"
+          }
+        }
+      ]
+    },
+    "albumOfTrack": {
+      "uri": "spotify:album:4sb0eMpDn3upAFfyi4q2rw",
+      "name": "Kind Of Blue (Legacy Edition)",
+      "coverArt": {
+        "extractedColors": {
+          "colorRaw": {
+            "hex": "#303848"
+          }
+        },
+        "sources": [
+          {
+            "height": 300,
+            "url": "https://i.scdn.co/image/ab67616d00001e020ebc17239b6b18ba88cfb8ca",
+            "width": 300
+          },
+          {
+            "height": 64,
+            "url": "https://i.scdn.co/image/ab67616d000048510ebc17239b6b18ba88cfb8ca",
+            "width": 64
+          },
+          {
+            "height": 640,
+            "url": "https://i.scdn.co/image/ab67616d0000b2730ebc17239b6b18ba88cfb8ca",
+            "width": 640
+          }
+        ]
+      }
+    },
+    "playcount": "208660066"
+  },
+  "album": {
+    "uri": "spotify:album:4sb0eMpDn3upAFfyi4q2rw",
+    "name": "Kind Of Blue (Legacy Edition)",
+    "type": "ALBUM",
+    "artists": {
+      "items": [
+        {
+          "uri": "spotify:artist:0kbYTNQb4Pb1rPbbaF0pT4",
+          "id": "0kbYTNQb4Pb1rPbbaF0pT4",
+          "profile": {
+            "name": "Miles Davis"
+          }
+        }
+      ]
+    },
+    "tracksV2": {
+      "totalCount": 21
+    },
+    "date": {
+      "isoString": "1959-08-17T00:00:00Z",
+      "precision": "DAY"
+    },
+    "label": "Columbia/Legacy",
+    "copyright": {
+      "items": [
+        {
+          "text": "This compilation (P) 2008 Columbia Records, a division of Sony Music Entertainment",
+          "type": "P"
+        }
+      ],
+      "totalCount": 1
+    },
+    "coverArt": {
+      "extractedColors": {
+        "colorDark": {
+          "hex": "#303848"
+        },
+        "colorLight": {
+          "hex": "#66779A"
+        },
+        "colorRaw": {
+          "hex": "#303848"
+        }
+      },
+      "sources": [
+        {
+          "height": 300,
+          "url": "https://i.scdn.co/image/ab67616d00001e020ebc17239b6b18ba88cfb8ca",
+          "width": 300
+        },
+        {
+          "height": 64,
+          "url": "https://i.scdn.co/image/ab67616d000048510ebc17239b6b18ba88cfb8ca",
+          "width": 64
+        },
+        {
+          "height": 640,
+          "url": "https://i.scdn.co/image/ab67616d0000b2730ebc17239b6b18ba88cfb8ca",
+          "width": 640
+        }
+      ]
+    }
+  },
+  "artist": {
+    "uri": "spotify:artist:0kbYTNQb4Pb1rPbbaF0pT4",
+    "profile": {
+      "name": "Miles Davis"
+    },
+    "stats": {
+      "followers": 2940033
+    },
+    "visuals": {
+      "avatarImage": {
+        "extractedColors": {
+          "colorRaw": {
+            "hex": "#535353"
+          }
+        },
+        "sources": [
+          {
+            "height": 640,
+            "url": "https://i.scdn.co/image/ab6772690000dd2212f90798134ecfe8dcb99db6",
+            "width": 640
+          },
+          {
+            "height": 64,
+            "url": "https://i.scdn.co/image/ab67726900008f7412f90798134ecfe8dcb99db6",
+            "width": 64
+          },
+          {
+            "height": 200,
+            "url": "https://i.scdn.co/image/ab6772690000bac312f90798134ecfe8dcb99db6",
+            "width": 200
+          },
+          {
+            "height": 1000,
+            "url": "https://i.scdn.co/image/ab6772690000c46c12f90798134ecfe8dcb99db6",
+            "width": 1000
+          }
+        ]
+      }
+    }
+  },
+  "show": {
+    "uri": "spotify:show:4sUCmBR0ujjm5g5j2JxsdF",
+    "name": "Jazz Notes",
+    "publisher": {
+      "name": "KSL Newsradio"
+    },
+    "description": "Ben Anderson and Chandler Holt team up to give you the most entertaining and informative Utah Jazz podcast in the podcast-verse.The Jazz Notes team is rounded out by Jeremiah Jensen, Sam Farnsworth and the rest of the KSL Sports staff. So #TakeNote and take a listen.",
+    "coverArt": {
+      "sources": [
+        {
+          "height": 64,
+          "url": "https://i.scdn.co/image/ab6765630000f68da818b17c4f8982288e6f8b96",
+          "width": 64
+        },
+        {
+          "height": 300,
+          "url": "https://i.scdn.co/image/ab67656300005f1fa818b17c4f8982288e6f8b96",
+          "width": 300
+        },
+        {
+          "height": 640,
+          "url": "https://i.scdn.co/image/ab6765630000ba8aa818b17c4f8982288e6f8b96",
+          "width": 640
+        }
+      ]
+    },
+    "episodesV2": {}
+  },
+  "episode": {
+    "uri": "spotify:episode:6oJcXB3q3JvpzH8S9BisM4",
+    "name": "What needs to change for the Utah Jazz after starting 1-7? | Jazz Notes",
+    "description": "The Utah Jazz find themselves at the bottom of the Western Conference standings with a record of 1-7. Yesterday, Utah took the New Orleans Pelicans to overtime but lost despite a 39-point performance from Keyonte George. With constant improvement from Darryn Peterson and Ace Bailey, can the Utah Jazz turn it around anytime soon? These podcasts are available on YouTube with video, typically after the audio version is posted. Sign up for the Jazz Notes newsletter! Receive game updates, exclusive analysis and chances to win Jazz tickets. Check out Ben and Chandler's X profiles - @BensHoops + @CHoltSports You can be a part of the Jazz Notes podcast by submitting questions for our mailbag through Ben's X on Mondays!",
+    "coverArt": {
+      "sources": [
+        {
+          "height": 64,
+          "url": "https://i.scdn.co/image/ab6765630000f68da818b17c4f8982288e6f8b96",
+          "width": 64
+        },
+        {
+          "height": 300,
+          "url": "https://i.scdn.co/image/ab67656300005f1fa818b17c4f8982288e6f8b96",
+          "width": 300
+        },
+        {
+          "height": 640,
+          "url": "https://i.scdn.co/image/ab6765630000ba8aa818b17c4f8982288e6f8b96",
+          "width": 640
+        }
+      ]
+    },
+    "duration": {
+      "totalMilliseconds": 1666037
+    },
+    "releaseDate": {
+      "isoString": "2026-11-05T19:30:00Z",
+      "precision": "MINUTE"
+    },
+    "contentRating": {
+      "label": "NONE"
+    },
+    "playedState": {
+      "playPositionMilliseconds": 0,
+      "state": "NOT_STARTED"
+    },
+    "podcastV2": {
+      "data": {
+        "uri": "spotify:show:4sUCmBR0ujjm5g5j2JxsdF",
+        "name": "Jazz Notes"
+      }
+    }
+  },
+  "playlist": {
+    "uri": "spotify:playlist:37i9dQZF1DX6lttj7ulLd6",
+    "name": "Smooth Jazz Chill",
+    "description": "Instrumental Smooth Jazz for relaxing.",
+    "images": {
+      "items": [
+        {
+          "sources": [
+            {
+              "height": null,
+              "url": "https://i.scdn.co/image/ab67706f0000000259d226eb50fd105e0629e028",
+              "width": null
+            }
+          ]
+        }
+      ]
+    },
+    "ownerV2": {
+      "data": {
+        "uri": "spotify:user:spotify",
+        "name": "Spotify",
+        "username": "spotify"
+      }
+    },
+    "revisionId": "AAAAALBLC3BVm96ttv5mszH/SjUGy4pC",
+    "followers": 471699,
+    "content": {
+      "totalCount": 100
+    }
+  }
+}

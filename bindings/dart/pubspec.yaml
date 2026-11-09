@@ -1,0 +1,9 @@
+name: spotcore_binding_checks
+publish_to: none
+environment:
+  sdk: ^3.10.8
+workspace:
+  - generated/spotcore_ffi
+dependencies:
+  spotcore_ffi:
+    path: generated/spotcore_ffi

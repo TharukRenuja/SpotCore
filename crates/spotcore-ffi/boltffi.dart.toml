@@ -1,0 +1,3 @@
+# BoltFFI 0.32.1 derives Dart native asset IDs from the Rust artifact name.
+[package]
+name = "spotcore_ffi"

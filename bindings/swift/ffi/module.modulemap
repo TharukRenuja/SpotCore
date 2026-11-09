@@ -1,0 +1,4 @@
+module SpotCoreFFI {
+    header "../generated/boltffi.h"
+    export *
+}

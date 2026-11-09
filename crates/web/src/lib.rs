@@ -1,0 +1,22 @@
+//! Myspoti-derived Spotify browser API and playback adapter (GPL-3.0-only).
+mod api;
+mod assets;
+mod bridge;
+mod cdp;
+mod connect;
+mod cookie;
+mod direct;
+mod domains;
+pub mod host;
+mod http;
+mod mapping;
+mod page;
+pub use page::WebPlayerOptions;
+mod player;
+pub use api::{Api, OPERATION_SCHEMA_JSON, OPERATIONS_JSON, Operation, Operations};
+pub use bridge::{BRIDGE_SOURCE, Browser, BrowserEvent};
+pub use domains::*;
+pub use host::{BrowserEngine, HostLauncher, ManagedHost};
+pub use http::RawResponse;
+pub use player::{AudioInfo, BrowserRole, DrmSupport, WebBackend};
+pub use serde_json::{Value, json};

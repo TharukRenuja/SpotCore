@@ -1,0 +1,1200 @@
+[
+  {
+    "operation": "blends.group",
+    "arguments": {
+      "value": "String"
+    },
+    "result": "Value"
+  },
+  {
+    "operation": "blends.invitation",
+    "arguments": {
+      "link_or_id": "String"
+    },
+    "result": "Value"
+  },
+  {
+    "operation": "blends.invite",
+    "arguments": {},
+    "result": "Value"
+  },
+  {
+    "operation": "blends.join",
+    "arguments": {
+      "link_or_id": "String"
+    },
+    "result": "Value"
+  },
+  {
+    "operation": "blends.leave",
+    "arguments": {
+      "value": "String"
+    },
+    "result": "Value"
+  },
+  {
+    "operation": "blends.rename",
+    "arguments": {
+      "value": "String",
+      "name": "String"
+    },
+    "result": "Value"
+  },
+  {
+    "operation": "blends.story",
+    "arguments": {
+      "value": "String"
+    },
+    "result": "Value"
+  },
+  {
+    "operation": "catalog.album",
+    "arguments": {
+      "value": "String"
+    },
+    "result": "MediaItem"
+  },
+  {
+    "operation": "catalog.album_info",
+    "arguments": {
+      "value": "String"
+    },
+    "result": "AlbumInfo"
+  },
+  {
+    "operation": "catalog.album_tracks",
+    "arguments": {
+      "value": "String",
+      "paging": "Paging"
+    },
+    "result": "Page<MediaItem>"
+  },
+  {
+    "operation": "catalog.appears_on",
+    "arguments": {
+      "value": "String"
+    },
+    "result": "Value"
+  },
+  {
+    "operation": "catalog.artist",
+    "arguments": {
+      "value": "String"
+    },
+    "result": "MediaItem"
+  },
+  {
+    "operation": "catalog.artist_info",
+    "arguments": {
+      "value": "String"
+    },
+    "result": "ArtistInfo"
+  },
+  {
+    "operation": "catalog.artist_page",
+    "arguments": {
+      "value": "String"
+    },
+    "result": "Value"
+  },
+  {
+    "operation": "catalog.artist_top_tracks",
+    "arguments": {
+      "value": "String"
+    },
+    "result": "Vec<MediaItem>"
+  },
+  {
+    "operation": "catalog.discography",
+    "arguments": {
+      "value": "String",
+      "paging": "Paging"
+    },
+    "result": "Page<MediaItem>"
+  },
+  {
+    "operation": "catalog.radio_blend",
+    "arguments": {
+      "seed_tracks": "Vec<String>",
+      "seed_artists": "Vec<String>",
+      "limit": "u32"
+    },
+    "result": "Vec<MediaItem>"
+  },
+  {
+    "operation": "catalog.recommendations",
+    "arguments": {
+      "seed_tracks": "Vec<String>",
+      "seed_artists": "Vec<String>",
+      "limit": "u32"
+    },
+    "result": "Vec<MediaItem>"
+  },
+  {
+    "operation": "catalog.related_artists",
+    "arguments": {
+      "value": "String"
+    },
+    "result": "Value"
+  },
+  {
+    "operation": "catalog.similar_albums",
+    "arguments": {
+      "value": "String",
+      "limit": "u32"
+    },
+    "result": "Value"
+  },
+  {
+    "operation": "catalog.track",
+    "arguments": {
+      "value": "String"
+    },
+    "result": "MediaItem"
+  },
+  {
+    "operation": "catalog.track_info",
+    "arguments": {
+      "value": "String"
+    },
+    "result": "TrackInfo"
+  },
+  {
+    "operation": "devices.audio_quality",
+    "arguments": {
+      "device": "Device"
+    },
+    "result": "AudioQuality"
+  },
+  {
+    "operation": "devices.list",
+    "arguments": {},
+    "result": "Vec<Device>"
+  },
+  {
+    "operation": "devices.pull_here",
+    "arguments": {},
+    "result": "Value"
+  },
+  {
+    "operation": "devices.set_audio_quality",
+    "arguments": {
+      "device": "Device",
+      "quality": "AudioQuality"
+    },
+    "result": "AudioQuality"
+  },
+  {
+    "operation": "devices.transfer",
+    "arguments": {
+      "device_id": "String",
+      "play": "bool"
+    },
+    "result": "Value"
+  },
+  {
+    "operation": "extras.canvas",
+    "arguments": {
+      "value": "String"
+    },
+    "result": "Value"
+  },
+  {
+    "operation": "extras.credits",
+    "arguments": {
+      "value": "String"
+    },
+    "result": "Value"
+  },
+  {
+    "operation": "extras.is_artist_banned",
+    "arguments": {
+      "values": "Vec<String>"
+    },
+    "result": "Value"
+  },
+  {
+    "operation": "extras.is_excluded_from_taste",
+    "arguments": {
+      "values": "Vec<String>"
+    },
+    "result": "Value"
+  },
+  {
+    "operation": "extras.lyrics",
+    "arguments": {
+      "value": "String"
+    },
+    "result": "Value"
+  },
+  {
+    "operation": "extras.radio",
+    "arguments": {
+      "value": "String"
+    },
+    "result": "Value"
+  },
+  {
+    "operation": "extras.radio_uri",
+    "arguments": {
+      "seed": "String"
+    },
+    "result": "Option<String>"
+  },
+  {
+    "operation": "extras.set_artist_banned",
+    "arguments": {
+      "value": "String",
+      "enabled": "bool"
+    },
+    "result": "Value"
+  },
+  {
+    "operation": "extras.set_excluded_from_taste",
+    "arguments": {
+      "value": "String",
+      "enabled": "bool"
+    },
+    "result": "Value"
+  },
+  {
+    "operation": "home.browse_categories",
+    "arguments": {},
+    "result": "Vec<BrowseCategory>"
+  },
+  {
+    "operation": "home.browse_page",
+    "arguments": {
+      "value": "String",
+      "sections": "Paging",
+      "items": "Paging"
+    },
+    "result": "BrowsePage"
+  },
+  {
+    "operation": "home.categories",
+    "arguments": {},
+    "result": "Value"
+  },
+  {
+    "operation": "home.category",
+    "arguments": {
+      "value": "String"
+    },
+    "result": "Value"
+  },
+  {
+    "operation": "home.feed",
+    "arguments": {
+      "timezone": "String",
+      "facet": "Option<String>",
+      "items_per_shelf": "u32"
+    },
+    "result": "Value"
+  },
+  {
+    "operation": "home.feed_info",
+    "arguments": {
+      "timezone": "String",
+      "facet": "Option<String>",
+      "items_per_shelf": "u32"
+    },
+    "result": "HomeFeed"
+  },
+  {
+    "operation": "home.made_for_you",
+    "arguments": {
+      "timezone": "String",
+      "paging": "Paging"
+    },
+    "result": "Page<MediaItem>"
+  },
+  {
+    "operation": "home.new_releases",
+    "arguments": {
+      "paging": "Paging"
+    },
+    "result": "Page<MediaItem>"
+  },
+  {
+    "operation": "home.section",
+    "arguments": {
+      "value": "String",
+      "timezone": "String",
+      "paging": "Paging"
+    },
+    "result": "Page<MediaItem>"
+  },
+  {
+    "operation": "home.top_mixes",
+    "arguments": {
+      "timezone": "String",
+      "paging": "Paging"
+    },
+    "result": "Page<MediaItem>"
+  },
+  {
+    "operation": "home.whats_new",
+    "arguments": {
+      "paging": "Paging"
+    },
+    "result": "Page<MediaItem>"
+  },
+  {
+    "operation": "jam.availability",
+    "arguments": {},
+    "result": "Value"
+  },
+  {
+    "operation": "jam.end",
+    "arguments": {},
+    "result": "Value"
+  },
+  {
+    "operation": "jam.invite_link",
+    "arguments": {
+      "session_id": "String"
+    },
+    "result": "Value"
+  },
+  {
+    "operation": "jam.join",
+    "arguments": {
+      "token": "String"
+    },
+    "result": "Value"
+  },
+  {
+    "operation": "jam.leave",
+    "arguments": {},
+    "result": "Value"
+  },
+  {
+    "operation": "jam.remove_member",
+    "arguments": {
+      "value": "String"
+    },
+    "result": "Value"
+  },
+  {
+    "operation": "jam.session",
+    "arguments": {},
+    "result": "Value"
+  },
+  {
+    "operation": "jam.set_participant_volume_control",
+    "arguments": {
+      "enabled": "bool"
+    },
+    "result": "Value"
+  },
+  {
+    "operation": "jam.set_queue_only",
+    "arguments": {
+      "enabled": "bool"
+    },
+    "result": "Value"
+  },
+  {
+    "operation": "jam.start",
+    "arguments": {},
+    "result": "Value"
+  },
+  {
+    "operation": "library.add",
+    "arguments": {
+      "values": "Vec<String>"
+    },
+    "result": "Value"
+  },
+  {
+    "operation": "library.contains",
+    "arguments": {
+      "values": "Vec<String>"
+    },
+    "result": "Vec<bool>"
+  },
+  {
+    "operation": "library.create_folder",
+    "arguments": {
+      "name": "String"
+    },
+    "result": "Value"
+  },
+  {
+    "operation": "library.delete_folder",
+    "arguments": {
+      "value": "String"
+    },
+    "result": "Value"
+  },
+  {
+    "operation": "library.folders",
+    "arguments": {},
+    "result": "Vec<LibraryEntry>"
+  },
+  {
+    "operation": "library.follow_artist",
+    "arguments": {
+      "value": "String"
+    },
+    "result": "Value"
+  },
+  {
+    "operation": "library.follow_show",
+    "arguments": {
+      "value": "String"
+    },
+    "result": "Value"
+  },
+  {
+    "operation": "library.hidden_songs",
+    "arguments": {
+      "cursor": "Option<String>",
+      "limit": "u32"
+    },
+    "result": "spotcore_core::CursorPage<HiddenSong>"
+  },
+  {
+    "operation": "library.items",
+    "arguments": {
+      "filter": "Option<String>",
+      "order": "String",
+      "folder": "Option<String>",
+      "paging": "Paging"
+    },
+    "result": "Page<MediaItem>"
+  },
+  {
+    "operation": "library.items_detailed",
+    "arguments": {
+      "filter": "Option<String>",
+      "order": "String",
+      "folder": "Option<String>",
+      "text_filter": "String",
+      "paging": "Paging"
+    },
+    "result": "Page<LibraryItem>"
+  },
+  {
+    "operation": "library.liked_tracks",
+    "arguments": {
+      "paging": "Paging"
+    },
+    "result": "Page<MediaItem>"
+  },
+  {
+    "operation": "library.move_to_folder",
+    "arguments": {
+      "value": "String",
+      "folder": "Option<String>"
+    },
+    "result": "Value"
+  },
+  {
+    "operation": "library.pin",
+    "arguments": {
+      "value": "String",
+      "pinned": "bool"
+    },
+    "result": "Value"
+  },
+  {
+    "operation": "library.remove",
+    "arguments": {
+      "values": "Vec<String>"
+    },
+    "result": "Value"
+  },
+  {
+    "operation": "library.rename_folder",
+    "arguments": {
+      "value": "String",
+      "name": "String"
+    },
+    "result": "Value"
+  },
+  {
+    "operation": "library.unfollow_artist",
+    "arguments": {
+      "value": "String"
+    },
+    "result": "Value"
+  },
+  {
+    "operation": "library.unfollow_show",
+    "arguments": {
+      "value": "String"
+    },
+    "result": "Value"
+  },
+  {
+    "operation": "playback.add_to_queue",
+    "arguments": {
+      "uris": "Vec<String>"
+    },
+    "result": "()"
+  },
+  {
+    "operation": "playback.audio_info",
+    "arguments": {},
+    "result": "AudioInfo"
+  },
+  {
+    "operation": "playback.capabilities",
+    "arguments": {},
+    "result": "Capabilities"
+  },
+  {
+    "operation": "playback.clear_queue",
+    "arguments": {},
+    "result": "()"
+  },
+  {
+    "operation": "playback.current_track",
+    "arguments": {},
+    "result": "Option<MediaItem>"
+  },
+  {
+    "operation": "playback.drm_support",
+    "arguments": {},
+    "result": "crate::web::DrmSupport"
+  },
+  {
+    "operation": "playback.execute",
+    "arguments": {
+      "command": "Command"
+    },
+    "result": "()"
+  },
+  {
+    "operation": "playback.execute_on",
+    "arguments": {
+      "device": "String",
+      "command": "Command"
+    },
+    "result": "()"
+  },
+  {
+    "operation": "playback.forward",
+    "arguments": {
+      "amount": "u64"
+    },
+    "result": "()"
+  },
+  {
+    "operation": "playback.insert_into_queue",
+    "arguments": {
+      "uris": "Vec<String>",
+      "before": "Option<QueueItem>"
+    },
+    "result": "()"
+  },
+  {
+    "operation": "playback.is_playing",
+    "arguments": {},
+    "result": "bool"
+  },
+  {
+    "operation": "playback.next",
+    "arguments": {},
+    "result": "()"
+  },
+  {
+    "operation": "playback.pause",
+    "arguments": {},
+    "result": "()"
+  },
+  {
+    "operation": "playback.play",
+    "arguments": {
+      "uri": "String"
+    },
+    "result": "()"
+  },
+  {
+    "operation": "playback.play_context",
+    "arguments": {
+      "uri": "String",
+      "track": "Option<String>",
+      "index": "Option<u32>",
+      "position": "Option<u64>"
+    },
+    "result": "()"
+  },
+  {
+    "operation": "playback.play_on",
+    "arguments": {
+      "device": "String",
+      "uri": "String"
+    },
+    "result": "()"
+  },
+  {
+    "operation": "playback.position_ms",
+    "arguments": {},
+    "result": "u64"
+  },
+  {
+    "operation": "playback.previous",
+    "arguments": {},
+    "result": "()"
+  },
+  {
+    "operation": "playback.queue",
+    "arguments": {},
+    "result": "Queue"
+  },
+  {
+    "operation": "playback.refresh_state",
+    "arguments": {},
+    "result": "Option<PlayerSnapshot>"
+  },
+  {
+    "operation": "playback.remove_from_queue",
+    "arguments": {
+      "items": "Vec<QueueItem>"
+    },
+    "result": "()"
+  },
+  {
+    "operation": "playback.reorder_queue",
+    "arguments": {
+      "items": "Vec<QueueItem>",
+      "before": "Option<QueueItem>",
+      "after": "Option<QueueItem>"
+    },
+    "result": "()"
+  },
+  {
+    "operation": "playback.resume",
+    "arguments": {},
+    "result": "()"
+  },
+  {
+    "operation": "playback.rewind",
+    "arguments": {
+      "amount": "u64"
+    },
+    "result": "()"
+  },
+  {
+    "operation": "playback.seek",
+    "arguments": {
+      "position": "u64"
+    },
+    "result": "()"
+  },
+  {
+    "operation": "playback.set_quality",
+    "arguments": {
+      "quality": "AudioQuality"
+    },
+    "result": "AppliedQuality"
+  },
+  {
+    "operation": "playback.set_repeat",
+    "arguments": {
+      "mode": "RepeatMode"
+    },
+    "result": "()"
+  },
+  {
+    "operation": "playback.set_shuffle",
+    "arguments": {
+      "on": "bool"
+    },
+    "result": "()"
+  },
+  {
+    "operation": "playback.set_shuffle_mode",
+    "arguments": {
+      "mode": "ShuffleMode"
+    },
+    "result": "()"
+  },
+  {
+    "operation": "playback.set_speed",
+    "arguments": {
+      "speed": "f64"
+    },
+    "result": "()"
+  },
+  {
+    "operation": "playback.set_volume",
+    "arguments": {
+      "volume": "f64"
+    },
+    "result": "()"
+  },
+  {
+    "operation": "playback.skip_to_queue",
+    "arguments": {
+      "item": "QueueItem"
+    },
+    "result": "()"
+  },
+  {
+    "operation": "playback.state",
+    "arguments": {},
+    "result": "Option<PlayerSnapshot>"
+  },
+  {
+    "operation": "playback.stop",
+    "arguments": {},
+    "result": "()"
+  },
+  {
+    "operation": "playback.toggle",
+    "arguments": {},
+    "result": "()"
+  },
+  {
+    "operation": "playback.volume",
+    "arguments": {},
+    "result": "f64"
+  },
+  {
+    "operation": "playlists.access",
+    "arguments": {
+      "value": "String"
+    },
+    "result": "Value"
+  },
+  {
+    "operation": "playlists.add_tracks",
+    "arguments": {
+      "value": "String",
+      "tracks": "Vec<String>"
+    },
+    "result": "()"
+  },
+  {
+    "operation": "playlists.added_by",
+    "arguments": {
+      "value": "String",
+      "paging": "Paging"
+    },
+    "result": "Page<PlaylistAdder>"
+  },
+  {
+    "operation": "playlists.collaborator_invite",
+    "arguments": {
+      "value": "String"
+    },
+    "result": "String"
+  },
+  {
+    "operation": "playlists.create",
+    "arguments": {
+      "name": "String",
+      "folder": "Option<String>"
+    },
+    "result": "Value"
+  },
+  {
+    "operation": "playlists.delete",
+    "arguments": {
+      "value": "String"
+    },
+    "result": "Value"
+  },
+  {
+    "operation": "playlists.follow",
+    "arguments": {
+      "value": "String"
+    },
+    "result": "Value"
+  },
+  {
+    "operation": "playlists.follow_artist",
+    "arguments": {
+      "value": "String"
+    },
+    "result": "Value"
+  },
+  {
+    "operation": "playlists.follow_show",
+    "arguments": {
+      "value": "String"
+    },
+    "result": "Value"
+  },
+  {
+    "operation": "playlists.join",
+    "arguments": {
+      "value": "String",
+      "invitation_token": "String"
+    },
+    "result": "Value"
+  },
+  {
+    "operation": "playlists.members",
+    "arguments": {
+      "value": "String"
+    },
+    "result": "Value"
+  },
+  {
+    "operation": "playlists.mine",
+    "arguments": {},
+    "result": "Vec<LibraryEntry>"
+  },
+  {
+    "operation": "playlists.move_tracks",
+    "arguments": {
+      "value": "String",
+      "uids": "Vec<String>",
+      "before": "Option<String>"
+    },
+    "result": "Value"
+  },
+  {
+    "operation": "playlists.playlist",
+    "arguments": {
+      "value": "String"
+    },
+    "result": "MediaItem"
+  },
+  {
+    "operation": "playlists.playlist_info",
+    "arguments": {
+      "value": "String"
+    },
+    "result": "PlaylistInfo"
+  },
+  {
+    "operation": "playlists.published",
+    "arguments": {
+      "value": "String"
+    },
+    "result": "Value"
+  },
+  {
+    "operation": "playlists.recommended",
+    "arguments": {
+      "value": "String",
+      "limit": "u32",
+      "skip": "Vec<String>"
+    },
+    "result": "Vec<TrackInfo>"
+  },
+  {
+    "operation": "playlists.remove_member",
+    "arguments": {
+      "value": "String",
+      "username": "String"
+    },
+    "result": "Value"
+  },
+  {
+    "operation": "playlists.remove_tracks",
+    "arguments": {
+      "value": "String",
+      "uids": "Vec<String>"
+    },
+    "result": "Value"
+  },
+  {
+    "operation": "playlists.rename",
+    "arguments": {
+      "value": "String",
+      "name": "String"
+    },
+    "result": "Value"
+  },
+  {
+    "operation": "playlists.set_access",
+    "arguments": {
+      "value": "String",
+      "access": "PlaylistAccess"
+    },
+    "result": "Value"
+  },
+  {
+    "operation": "playlists.set_cover",
+    "arguments": {
+      "value": "String",
+      "jpeg": "Option<Vec<u8>>"
+    },
+    "result": "Value"
+  },
+  {
+    "operation": "playlists.set_description",
+    "arguments": {
+      "value": "String",
+      "description": "String"
+    },
+    "result": "Value"
+  },
+  {
+    "operation": "playlists.set_hidden",
+    "arguments": {
+      "playlist": "String",
+      "track": "String",
+      "hidden": "bool"
+    },
+    "result": "()"
+  },
+  {
+    "operation": "playlists.set_member_collaborator",
+    "arguments": {
+      "value": "String",
+      "username": "String",
+      "enabled": "bool"
+    },
+    "result": "Value"
+  },
+  {
+    "operation": "playlists.set_published",
+    "arguments": {
+      "value": "String",
+      "published": "bool"
+    },
+    "result": "Value"
+  },
+  {
+    "operation": "playlists.tracks",
+    "arguments": {
+      "value": "String",
+      "paging": "Paging"
+    },
+    "result": "Page<MediaItem>"
+  },
+  {
+    "operation": "playlists.unfollow",
+    "arguments": {
+      "value": "String"
+    },
+    "result": "Value"
+  },
+  {
+    "operation": "playlists.unfollow_artist",
+    "arguments": {
+      "value": "String"
+    },
+    "result": "Value"
+  },
+  {
+    "operation": "playlists.unfollow_show",
+    "arguments": {
+      "value": "String"
+    },
+    "result": "Value"
+  },
+  {
+    "operation": "podcasts.audiobook",
+    "arguments": {
+      "value": "String"
+    },
+    "result": "Value"
+  },
+  {
+    "operation": "podcasts.chapters",
+    "arguments": {
+      "value": "String",
+      "paging": "Paging"
+    },
+    "result": "Page<MediaItem>"
+  },
+  {
+    "operation": "podcasts.episode",
+    "arguments": {
+      "value": "String"
+    },
+    "result": "MediaItem"
+  },
+  {
+    "operation": "podcasts.episode_info",
+    "arguments": {
+      "value": "String"
+    },
+    "result": "EpisodeInfo"
+  },
+  {
+    "operation": "podcasts.episodes",
+    "arguments": {
+      "value": "String",
+      "paging": "Paging"
+    },
+    "result": "Page<MediaItem>"
+  },
+  {
+    "operation": "podcasts.saved_episodes",
+    "arguments": {},
+    "result": "Value"
+  },
+  {
+    "operation": "podcasts.set_saved",
+    "arguments": {
+      "value": "String",
+      "saved": "bool"
+    },
+    "result": "Value"
+  },
+  {
+    "operation": "podcasts.show",
+    "arguments": {
+      "value": "String"
+    },
+    "result": "MediaItem"
+  },
+  {
+    "operation": "podcasts.show_details",
+    "arguments": {
+      "value": "String"
+    },
+    "result": "Value"
+  },
+  {
+    "operation": "podcasts.show_info",
+    "arguments": {
+      "value": "String"
+    },
+    "result": "ShowInfo"
+  },
+  {
+    "operation": "recents.entries",
+    "arguments": {
+      "paging": "Paging"
+    },
+    "result": "Value"
+  },
+  {
+    "operation": "search.all",
+    "arguments": {
+      "query": "String",
+      "limit": "u32"
+    },
+    "result": "SearchResults"
+  },
+  {
+    "operation": "search.query",
+    "arguments": {
+      "kind": "SearchKind",
+      "query": "String",
+      "paging": "Paging"
+    },
+    "result": "Page<MediaItem>"
+  },
+  {
+    "operation": "search.recent",
+    "arguments": {},
+    "result": "Value"
+  },
+  {
+    "operation": "search.recent_items",
+    "arguments": {},
+    "result": "Vec<MediaItem>"
+  },
+  {
+    "operation": "search.remove_recent",
+    "arguments": {
+      "uris": "Vec<String>"
+    },
+    "result": "Value"
+  },
+  {
+    "operation": "search.suggestion_texts",
+    "arguments": {
+      "query": "String",
+      "limit": "u32"
+    },
+    "result": "Vec<String>"
+  },
+  {
+    "operation": "search.suggestions",
+    "arguments": {
+      "query": "String",
+      "limit": "u32"
+    },
+    "result": "Value"
+  },
+  {
+    "operation": "users.follow",
+    "arguments": {
+      "values": "Vec<String>"
+    },
+    "result": "Value"
+  },
+  {
+    "operation": "users.followers",
+    "arguments": {
+      "value": "String"
+    },
+    "result": "Value"
+  },
+  {
+    "operation": "users.following",
+    "arguments": {
+      "value": "String"
+    },
+    "result": "Value"
+  },
+  {
+    "operation": "users.friend_activity",
+    "arguments": {},
+    "result": "Value"
+  },
+  {
+    "operation": "users.history",
+    "arguments": {},
+    "result": "Value"
+  },
+  {
+    "operation": "users.is_blocked",
+    "arguments": {
+      "value": "String"
+    },
+    "result": "bool"
+  },
+  {
+    "operation": "users.is_following",
+    "arguments": {
+      "values": "Vec<String>"
+    },
+    "result": "Value"
+  },
+  {
+    "operation": "users.me",
+    "arguments": {},
+    "result": "Account"
+  },
+  {
+    "operation": "users.profile",
+    "arguments": {
+      "value": "String"
+    },
+    "result": "Value"
+  },
+  {
+    "operation": "users.set_blocked",
+    "arguments": {
+      "value": "String",
+      "blocked": "bool"
+    },
+    "result": "Value"
+  },
+  {
+    "operation": "users.set_private_session",
+    "arguments": {
+      "enabled": "bool"
+    },
+    "result": "Value"
+  },
+  {
+    "operation": "users.top",
+    "arguments": {
+      "range": "TimeRange",
+      "limit": "u32"
+    },
+    "result": "Value"
+  },
+  {
+    "operation": "users.unfollow",
+    "arguments": {
+      "values": "Vec<String>"
+    },
+    "result": "Value"
+  }
+]

@@ -1,0 +1,18 @@
+[package]
+name = "spotcore-ffi"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+boltffi = { version = "=0.32.1", default-features = false }
+spotcore = { path = "../..", features = ["native"] }
+tokio = { version = "1", features = ["rt", "sync", "macros", "net", "time"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+futures-executor = "0.3"
