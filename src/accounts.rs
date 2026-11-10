@@ -150,6 +150,7 @@ impl AccountManager {
         }
         let mut builder = SpotCore::builder()
             .data_dir(paths.root())
+            .profile_dir(paths.profile())
             .web_options(self.web_options.clone())
             .browser_role(self.role)
             .engine(self.engine);

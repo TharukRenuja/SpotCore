@@ -10,7 +10,10 @@ use spotcore::{Paths, SpotCore};
 async fn login() -> Result<(), spotcore::Error> {
     let paths = Paths::for_app("my-music-app")?;
     SpotCore::login(Some(&paths.profile())).await?;
-    let spotify = SpotCore::builder().data_dir(paths.root()).launch().await?;
+    let spotify = SpotCore::builder()
+        .data_dir(paths.root())
+        .profile_dir(paths.profile())
+        .launch().await?;
     spotify.shutdown().await?;
     Ok(())
 }
