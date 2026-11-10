@@ -1,0 +1,39 @@
+name: Documentation
+
+on:
+  push:
+    branches: [main, "release/**"]
+    paths:
+      - '**/*.md'
+      - 'docs/**'
+      - 'scripts/check_docs.py'
+      - '.github/workflows/docs.yml'
+  pull_request:
+    paths:
+      - '**/*.md'
+      - 'docs/**'
+      - 'scripts/check_docs.py'
+      - '.github/workflows/docs.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  docs:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: python scripts/check_docs.py
+      - run: python scripts/generate_ffi_operations.py --check

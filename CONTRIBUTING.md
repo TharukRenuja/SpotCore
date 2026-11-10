@@ -31,6 +31,12 @@ node crates/web/tests/js/services.test.cjs
 
 These commands check the SDK without compiling the optional OS web-engine helper. Whole-workspace checks also build `host/system`; Linux needs WebKitGTK/GTK development packages as described in [engine setup](docs/engines.md). CI checks desktop platforms and Rust feature combinations. Live account tests are separate and opt-in.
 
+## CI runs
+
+Code changes run the SDK, FFI, launcher and Node checks together on Linux. Documentation changes get lightweight link and generated-reference checks without compiling the SDK. Feature branches use pull-request checks instead of duplicate push and PR runs.
+
+Before a version release or after platform-specific changes, open **Actions → CI → Run workflow** and enable **full**. This adds Windows/macOS, Rust 1.89 and OS web-engine checks. Artifact packaging stays separate on the development repository. Runs have timeouts, superseded runs are cancelled, and failure diagnostics expire after three days.
+
 ## Change a binding
 
 The shared binding layer lives in `crates/spotcore-ffi`; wrappers, tests and examples live under `bindings/`. Edit the source rather than generated files. If service or playback signatures change, regenerate the operation adapters and reference:
