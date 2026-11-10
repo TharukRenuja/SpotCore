@@ -355,6 +355,33 @@ impl Browser {
         Ok(browser)
     }
 
+    /// Reads only the Spotify cookie needed for HTTP renewal, including HttpOnly cookies.
+    pub(crate) async fn session_cookie(&self) -> Result<String, Error> {
+        let response = self
+            .inner
+            .cdp
+            .request(
+                "Network.getCookies",
+                json!({"urls": ["https://open.spotify.com/"]}),
+            )
+            .await?;
+        let cookies = response["cookies"].as_array().ok_or(Error::Unsupported)?;
+        let mut matches = cookies.iter().filter(|cookie| {
+            cookie["name"] == "sp_dc"
+                && cookie["domain"].as_str().is_some_and(|domain| {
+                    matches!(domain, ".spotify.com" | "spotify.com" | "open.spotify.com")
+                })
+        });
+        let value = matches
+            .next()
+            .and_then(|cookie| cookie["value"].as_str())
+            .ok_or(Error::NotAuthenticated)?;
+        if matches.next().is_some() {
+            return Err(Error::Backend("ambiguous Spotify session cookies".into()));
+        }
+        Ok(value.to_owned())
+    }
+
     /// Requests a graceful exit of an owned host. Never call this on an external browser.
     pub async fn shutdown_host(&self) -> Result<(), Error> {
         self.inner

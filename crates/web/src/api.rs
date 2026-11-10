@@ -105,6 +105,24 @@ impl Api {
         Ok(api)
     }
 
+    /// Copies this browser's Spotify session into renewable HTTP services.
+    /// Store the returned credentials only in a protected vault. No browser is closed here.
+    pub async fn http_services(
+        &self,
+        paths: &Paths,
+    ) -> Result<(Self, spotcore_auth::WebCredentials), Error> {
+        let cookie = self.browser()?.session_cookie().await?;
+        let api = Self::from_cookie(cookie.clone(), paths)?;
+        Ok((
+            api,
+            spotcore_auth::WebCredentials {
+                sp_dc: Some(cookie),
+                access_token: None,
+                expires_at_ms: None,
+            },
+        ))
+    }
+
     fn build(
         browser: Option<Browser>,
         session: Option<WebSession>,

@@ -148,16 +148,21 @@ pub(crate) async fn native_device(
         .device_name()
         .ok_or_else(|| Error::Backend("native quality needs a launched device name".into()))?;
     // The daemon registers with Connect shortly after its session opens.
+    let mut last_error = None;
     for _ in 0..20 {
         let devices = api.devices().list().await?;
-        if let Some(device) = named_device(devices, name)? {
-            return Ok(device);
+        match named_device(devices, name) {
+            Ok(Some(device)) => return Ok(device),
+            Ok(None) => {}
+            Err(error) => last_error = Some(error),
         }
         tokio::time::sleep(std::time::Duration::from_millis(250)).await;
     }
-    Err(Error::Backend(format!(
-        "Connect device {name:?} did not appear; is the daemon signed in?"
-    )))
+    Err(last_error.unwrap_or_else(|| {
+        Error::Backend(format!(
+            "Connect device {name:?} did not appear; is the daemon signed in?"
+        ))
+    }))
 }
 
 #[cfg(feature = "native")]
@@ -411,7 +416,7 @@ impl SpotCoreBuilder {
         if role == crate::web::BrowserRole::Playback
             && sdk.playback_mode() == crate::PlaybackMode::Web
         {
-            sdk.drm_support().await?.require_playback()?;
+            sdk.require_web_playback().await?;
         }
         Ok(sdk)
     }
@@ -426,6 +431,8 @@ impl SpotCoreBuilder {
         let self_builder = self;
         #[cfg(feature = "native")]
         let mut fallback = None;
+        #[cfg(not(feature = "native"))]
+        let fallback = None;
         #[cfg(feature = "native")]
         if self_builder.native_credentials.is_some() {
             let session = self_builder.clone().launch_http(api).await?;
@@ -435,7 +442,10 @@ impl SpotCoreBuilder {
             fallback = session.native_fallback_reason().cloned();
             self_builder.native_credentials = None;
         }
-        let web = self_builder.launch_web().await?;
+        let web = self_builder
+            .launch_web()
+            .await
+            .map_err(|error| crate::session::startup_error(fallback.clone(), error))?;
         let session = SpotCore::from_web(web);
         #[cfg(feature = "native")]
         let mut session = session;
@@ -443,7 +453,7 @@ impl SpotCoreBuilder {
         {
             session.native_fallback = fallback;
         }
-        session.drm_support().await?.require_playback()?;
+        session.require_web_playback().await?;
         Ok(session)
     }
 

@@ -21,6 +21,8 @@ async fn search(spotify: &SpotCore) -> Result<(), Error> {
 | Error | App response |
 | --- | --- |
 | `NotAuthenticated` | Obtain fresh credentials or use optional login |
+| `NativeAuthenticationRequired` | Soloist has not confirmed authentication; inspect registration/pairing |
+| `NativeStartupFailed` | Inspect both native and Web fallback errors |
 | `InvalidInput` | Correct the request; do not retry unchanged |
 | `Unsupported` | Disable the action for this mode/device |
 | `AccountRestricted` | Explain account/backend eligibility |
@@ -37,6 +39,12 @@ Authenticated HTTP remembers numeric `Retry-After` values on 429 per Spotify hos
 There is no automatic replay of a mutation after an ambiguous acknowledgement or a transport failure. Before retrying a playlist edit, transfer or playback action, inspect state where possible. The recommendation endpoint's persistent 429 has not been established to be ordinary transient throttling; do not loop indefinitely.
 
 ## Permissions and recovery
+
+`NativeAuthenticationRequired` means a running Soloist daemon has not confirmed
+Spotify authentication. It does not mean the service login expired or prove the
+Soloist key is invalid. `NativeStartupFailed { native, fallback }` preserves the
+native error when subsequent Web startup/DRM validation fails. Bindings expose
+these as `native_authentication_required` and `native_startup_failed` codes.
 
 Refresh state, then read `spotify.capabilities()` before presenting playback actions. Restrictions can change between the check and execution, so still handle errors. A missing or region-restricted catalog item is distinct from an empty successful search.
 

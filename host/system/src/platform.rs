@@ -346,6 +346,13 @@ pub fn run() -> Result<()> {
                 let result = match packet["method"].as_str().unwrap() {
                     "Page.getFrameTree" => Some(json!({"frameTree":{"frame":{"id":"main","url":*current_url.lock().unwrap()}}})),
                     "Page.enable" | "Network.enable" => Some(json!({})),
+                    "Network.getCookies" if params["urls"] == json!(["https://open.spotify.com/"])
+                        && protocol::spotify_origin(&current_url.lock().unwrap()) => {
+                        match view.cookies_for_url("https://open.spotify.com/") {
+                            Ok(cookies) => Some(json!({"cookies": cookies.into_iter().filter(|cookie| cookie.name() == "sp_dc").map(|cookie| json!({"name":cookie.name(), "value":cookie.value(), "domain":cookie.domain().unwrap_or("open.spotify.com")})).collect::<Vec<_>>()})),
+                            Err(_) => { emit(&output, failure(id)); return; }
+                        }
+                    }
                     "Browser.close" => { let _ = proxy.send_event(HostEvent::Exit(true)); Some(json!({})) }
 
                     "Runtime.addBinding" if params["name"] == "__mspHostPost" => Some(json!({})),

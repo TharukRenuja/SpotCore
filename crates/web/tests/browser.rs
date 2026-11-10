@@ -6,6 +6,51 @@ use spotcore_web::{Api, Browser, SearchKind, WebBackend};
 use std::time::Duration;
 
 #[tokio::test]
+async fn browser_credentials_become_renewable_http_services_without_exposing_secrets() {
+    let mock = MockBrowser::start().await;
+    mock.response.lock().unwrap()["cookies"] = json!([
+        {"name":"sp_dc","domain":".spotify.com","value":"private-cookie"},
+        {"name":"other","domain":".spotify.com","value":"unrelated"}
+    ]);
+    let api = Api::connect(&mock.endpoint).await.unwrap();
+    let paths = spotcore_core::Paths::new(std::env::temp_dir().join("spotcore-http-handoff"));
+    let (http, credentials) = api.http_services(&paths).await.unwrap();
+    assert!(http.browser().is_err());
+    assert_eq!(credentials.sp_dc.as_deref(), Some("private-cookie"));
+    assert!(credentials.access_token.is_none());
+    assert!(!format!("{credentials:?}").contains("private-cookie"));
+    assert!(
+        api.browser().is_ok(),
+        "export must not shut down an attached browser"
+    );
+    assert!(
+        mock.protocol
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(method, params)| method == "Network.getCookies"
+                && params["urls"] == json!(["https://open.spotify.com/"]))
+    );
+}
+
+#[tokio::test]
+async fn browser_handoff_rejects_missing_foreign_ambiguous_and_invalid_cookies() {
+    let mock = MockBrowser::start().await;
+    let api = Api::connect(&mock.endpoint).await.unwrap();
+    let paths =
+        spotcore_core::Paths::new(std::env::temp_dir().join("spotcore-http-handoff-invalid"));
+    for cookies in [
+        json!([]),
+        json!([{"name":"sp_dc","domain":"evilspotify.com","value":"private-cookie"}]),
+        json!([{"name":"sp_dc","domain":".spotify.com","value":"a"},{"name":"sp_dc","domain":"open.spotify.com","value":"b"}]),
+        json!([{"name":"sp_dc","domain":".spotify.com","value":"invalid;cookie"}]),
+    ] {
+        mock.response.lock().unwrap()["cookies"] = cookies;
+        assert!(api.http_services(&paths).await.is_err());
+    }
+}
+
+#[tokio::test]
 async fn concurrent_calls_are_correlated_even_when_replies_arrive_out_of_order() {
     let mock = MockBrowser::start().await;
     let browser = Browser::connect(&mock.endpoint).await.unwrap();

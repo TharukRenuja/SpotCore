@@ -93,7 +93,21 @@ This example requires `spotcore = { path = "../SpotCore", features = ["native"] 
 
 With `AccountManager`, a saved native key is tried by default after fresh account verification. `manager.prefer_native(false)` selects Web for subsequent opens without deleting the key; new managers default to native preference.
 
-Preview limitation: standalone native playback has worked locally, but managed account startup has also fallen back to Web after authentication. Partial-event handling and startup waiting were patched; those patches have not resolved every reported case. Inspect `native_fallback_reason()` and retain Web fallback in apps.
+Managed native startup first checks the daemon's authentication state. If it is
+not signed in, the SDK looks for an unambiguous matching device in the current
+account's Connect list and submits one paused transfer to activate it. A transfer
+response alone is not success: the daemon must confirm `logged_in`, followed by
+same-account device verification. Existing authenticated daemons skip this
+activation. A paused transfer can move the account away from its current receiver.
+
+A device absent from the account list cannot be authenticated by guessing a
+transfer target. If activation does not produce authentication within the startup
+deadline, `native_fallback_reason()` reports `NativeAuthenticationRequired`.
+First-time pairing may still be necessary; automatic first-time pairing has not
+been established by the offline activation tests. A disconnected daemon is reported
+as `Disconnected`, and an unresolved transfer request as `Timeout`; transfers are
+never automatically replayed. If Web fallback also fails, `NativeStartupFailed`
+retains both errors instead of hiding the native cause behind DRM/engine errors.
 
 The separately cached executable is `spotcore-native` (`.exe` on Windows), with install metadata beside it. Managed downloads refresh after 85 days from recorded download time, independently of SDK releases. This is a freshness policy, not proof of a vendor build's expiry. Stop managed daemons before updating. The Soloist API key is passed as an argument because its interface requires it, so it can be visible in process listings.
 

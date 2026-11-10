@@ -34,6 +34,17 @@ An application normally combines event consumption with its command channel and 
 
 Event order/frequency depends on the backend; not every service operation produces a playback event. `EventsLagged(count)` is an error reporting dropped events. Non-exhaustive event enums need a fallback arm.
 
+Native events cover the owned daemon, not every receiver in the Spotify account.
+`playback_state` produces a snapshot, playback changes produce `StateChanged`,
+and track changes update and emit a snapshot. Position-sync messages update the
+daemon's cached position without emitting a separate UI tick. Authentication
+messages produce `SessionChanged`. Device-active messages update the native
+activation state; they do not provide a complete account-wide device feed.
+The current native adapter does not emit a typed queue-change feed. Keep targeted
+queue/remote-device refreshes and refresh after reconnecting or missing events;
+native playback alone is not a reason to disable all polling. Advance the display
+clock locally between position updates.
+
 ## PlayerSnapshot
 
 Snapshots contain state, optional track/context, position/duration/timestamp, buffering, shuffle, optional Smart Shuffle, repeat and capabilities. Optional device id/name/volume can be absent in push/native snapshots. Refreshing Web/HTTP state estimates elapsed position; cached `state()` does not advance on its own. Applications run their own display clock between updates.

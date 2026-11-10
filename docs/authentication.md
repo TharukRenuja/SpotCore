@@ -21,6 +21,23 @@ async fn login() -> Result<(), spotcore::Error> {
 
 Interactive login is optional and requires a browser host. `.profile_dir(path)` reuses a browser profile; `.data_dir(root)` places SDK state under an explicit root. `SPOTCORE_DATA_DIR` overrides the default root. Use `.app_id("my-app")?` for an application subdirectory under the default root. Default paths follow each OS's application-data conventions.
 
+After verifying a browser account, AccountManager captures its `sp_dc` through
+the local browser protocol and saves it in the protected credential store.
+Services mode can then close the owned browser and use renewable HTTP services.
+A successful native startup can also release the browser. Web playback keeps
+its browser. If a helper cannot export the cookie, the session remains
+browser-backed; successful browser login is not proof of browser-free services.
+
+`api.http_services(&paths).await` returns a separate HTTP `Api` and redacted-debug
+`WebCredentials`. It reads only the Spotify session cookie and obtains HTTP access
+through the SDK's cookie renewal path. It neither persists credentials nor closes
+the source browser. Verify `users().me()` against the expected account before
+switching; AccountManager performs that check before saving the credential or
+releasing the browser. If HTTP verification cannot complete, it retains the
+working browser session without saving an unverified cookie.
+Store the returned credentials only in a vault. Missing, ambiguous, foreign-domain
+or malformed cookies fail rather than creating an unauthenticated HTTP client.
+
 `SpotCore::connect("http://127.0.0.1:9222").await?` attaches to an existing Spotify browser tab. Use a dedicated profile and a loopback CDP endpoint: the debugger grants broad access to that browser. Attached browsers retain their own credentials and are not closed by SDK shutdown.
 
 ## Switch accounts
@@ -41,7 +58,7 @@ async fn select_account(username: &str, sp_dc: String) -> Result<(), spotcore::E
 }
 ```
 
-Use the canonical Spotify username, not the display name. Selection verifies identity and closes the previous owned session; it does not automatically transfer playback. Each account has separate browser/native data and an exclusive session lease.
+Use the canonical Spotify username, not the display name. Selection verifies identity and closes the previous owned session without starting audio. Preparing an unauthenticated native daemon may activate a matching account-scoped receiver with a paused Connect transfer. Each account has separate browser/native data and an exclusive session lease.
 
 `switch_with()` does not persist the supplied profile to AccountStore, although a launched browser can retain its own cookies. For saved accounts, use `add(profile)`, `list()`, `switch_to(username)` and `forget(username)`. `close()` stops the selected session.
 

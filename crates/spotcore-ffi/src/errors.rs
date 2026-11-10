@@ -27,6 +27,8 @@ impl From<spotcore::Error> for BindingError {
         use spotcore::Error;
         let code = match &error {
             Error::NotAuthenticated => "not_authenticated",
+            Error::NativeAuthenticationRequired => "native_authentication_required",
+            Error::NativeStartupFailed { .. } => "native_startup_failed",
             Error::Unsupported => "unsupported",
             Error::InvalidInput(_) => "invalid_input",
             Error::AccountRestricted(_) => "account_restricted",
@@ -38,5 +40,25 @@ impl From<spotcore::Error> for BindingError {
             _ => error.to_string(),
         };
         Self::new(code, message)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn native_authentication_and_fallback_have_distinct_binding_codes() {
+        assert_eq!(
+            BindingError::from(spotcore::Error::NativeAuthenticationRequired).code,
+            "native_authentication_required"
+        );
+        let error = spotcore::Error::NativeStartupFailed {
+            native: Box::new(spotcore::Error::NativeAuthenticationRequired),
+            fallback: Box::new(spotcore::Error::DrmUnavailable("missing DRM".into())),
+        };
+        let error = BindingError::from(error);
+        assert_eq!(error.code, "native_startup_failed");
+        assert!(error.message.contains("Soloist") && error.message.contains("missing DRM"));
     }
 }

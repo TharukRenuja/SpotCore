@@ -151,6 +151,11 @@ pub enum Error {
     DrmUnavailable(String),
     AccountRestricted(&'static str),
     NotAuthenticated,
+    NativeAuthenticationRequired,
+    NativeStartupFailed {
+        native: Box<Error>,
+        fallback: Box<Error>,
+    },
     Disconnected,
     Timeout,
     EventsLagged(u64),
@@ -176,6 +181,8 @@ impl fmt::Display for Error {
             }
             Self::Unsupported => f.write_str("command is not supported by this session"),
             Self::NotAuthenticated => f.write_str("authentication is required"),
+            Self::NativeAuthenticationRequired => f.write_str("Soloist is running but has not authenticated with Spotify; this device may need pairing"),
+            Self::NativeStartupFailed { native, fallback } => write!(f, "native startup failed: {native}; Web fallback failed: {fallback}"),
             Self::Timeout => {
                 f.write_str("operation timed out; a submitted write may have completed")
             }

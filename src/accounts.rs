@@ -105,7 +105,8 @@ impl AccountManager {
         Ok(())
     }
 
-    /// Selects a saved account without transferring or starting playback.
+    /// Selects a saved account without starting playback.
+    /// A pending native login may activate an account-scoped receiver while paused.
     pub async fn switch_to(&mut self, id: &str) -> Result<(), Error> {
         let store = self.store.clone();
         let owned_id = id.to_owned();
@@ -160,6 +161,12 @@ impl AccountManager {
         if !login && let Some(cookie) = profile.web.as_ref().and_then(|web| web.sp_dc.as_ref()) {
             builder = builder.session_cookie(cookie);
         }
+        #[cfg(feature = "native")]
+        if self.prefer_native
+            && let Some(credentials) = profile.soloist.clone()
+        {
+            builder = builder.with_native_credentials(credentials);
+        }
         let (session, verified_account) = if let Some(cookie) = profile
             .web
             .as_ref()
@@ -169,26 +176,57 @@ impl AccountManager {
             let api = crate::Api::from_cookie(cookie.clone(), &paths)?;
             let account = api.users().me().await?;
             verify_identity(&profile.canonical_username, &account.username)?;
-            #[cfg(feature = "native")]
-            if self.prefer_native
-                && let Some(credentials) = profile.soloist.clone()
-            {
-                builder = builder.with_native_credentials(credentials);
-            }
-            (builder.launch_with_services(api).await?, Some(account))
+            (
+                builder.clone().launch_with_services(api).await?,
+                Some(account),
+            )
         } else {
-            (SpotCore::from_web(builder.launch_web().await?), None)
+            (
+                SpotCore::from_web(builder.clone().launch_web().await?),
+                None,
+            )
         };
-        #[cfg(feature = "native")]
         let mut session = session;
         #[cfg(feature = "native")]
-        let verify_before_native = verified_account.is_none();
+        let mut verify_before_native = verified_account.is_none();
         let result = async {
             let account = match verified_account {
                 Some(account) => account,
                 None => session.users().me().await?,
             };
             verify_identity(&profile.canonical_username, &account.username)?;
+            if session.api.browser().is_ok()
+                && let Ok((api, credentials)) = session.api.http_services(&paths).await
+                && let Ok(http_account) = api.users().me().await
+            {
+                verify_identity(&profile.canonical_username, &http_account.username)?;
+                profile.web = Some(credentials);
+                let use_http = self.role == crate::BrowserRole::Services;
+                #[cfg(feature = "native")]
+                let use_http = use_http || (self.prefer_native && profile.soloist.is_some());
+                if use_http {
+                    // Retire the old Web receiver before registering Soloist with the same name.
+                    session.shutdown_owned().await?;
+                    let candidate = builder.clone().launch_http(api).await?;
+                    if self.role == crate::BrowserRole::Services
+                        || candidate.playback_mode() == crate::PlaybackMode::Native
+                    {
+                        session = candidate;
+                    } else {
+                        let fallback = candidate.native_fallback.clone();
+                        candidate.shutdown().await?;
+                        let web = builder.clone().launch_web().await.map_err(|error| {
+                            crate::session::startup_error(fallback.clone(), error)
+                        })?;
+                        session = SpotCore::from_web(web);
+                        session.native_fallback = fallback;
+                    }
+                    #[cfg(feature = "native")]
+                    {
+                        verify_before_native = false;
+                    }
+                }
+            }
             profile.display_name = Some(account.name);
             profile.tier = Some(account.tier);
             profile.tier_checked_at_ms = Some(
@@ -212,7 +250,7 @@ impl AccountManager {
             if self.role == crate::BrowserRole::Playback
                 && session.playback_mode() == crate::PlaybackMode::Web
             {
-                session.drm_support().await?.require_playback()?;
+                session.require_web_playback().await?;
             }
             Ok::<_, Error>(())
         }

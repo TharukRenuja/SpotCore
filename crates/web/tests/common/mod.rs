@@ -128,6 +128,7 @@ impl MockBrowser {
                             },
                             "Fetch.getResponseBody"=>result=body_response.lock().unwrap().clone(),
                             "Network.setCookie"=>result=json!({"success":true}),
+                            "Network.getCookies"=>result=json!({"cookies":body_response.lock().unwrap().get("cookies").cloned().unwrap_or(json!([]))}),
                             "Runtime.enable"=>{ws.send(Message::Text(context(current_context).to_string().into())).await.unwrap();},
                             "Runtime.evaluate"=>{
                                 assert_eq!(request["params"]["uniqueContextId"],format!("context-{current_context}"));

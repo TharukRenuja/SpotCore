@@ -259,12 +259,15 @@ impl SoloistBackend {
             writer_task,
         };
 
-        // A socket can open before the daemon finishes signing in.
-        let _ = backend
-            .wait_authenticated(std::time::Duration::from_secs(10))
-            .await;
-
         Ok(backend)
+    }
+
+    /// A live control socket is not proof that the daemon has authenticated.
+    pub fn authentication_state(&self) -> Result<bool, Error> {
+        self.logged_in
+            .has_changed()
+            .map_err(|_| Error::Disconnected)?;
+        Ok(*self.logged_in.borrow())
     }
 
     /// Waits until the daemon confirms login authentication, up to `dur`.
@@ -548,5 +551,25 @@ mod tests {
             spotcore_core::paths::Paths::new(std::env::temp_dir().join("spotcore_blank_name"));
         let result = SoloistBackend::launch_as("key", &paths, "   ").await;
         assert!(matches!(result, Err(Error::InvalidInput(_))));
+    }
+
+    #[tokio::test]
+    async fn closed_socket_is_not_reported_as_missing_authentication() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("ws://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+            socket.close(None).await.unwrap();
+        });
+        let backend = SoloistBackend::connect(&endpoint).await.unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            while backend.authentication_state() != Err(Error::Disconnected) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        server.await.unwrap();
     }
 }

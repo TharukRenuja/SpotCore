@@ -81,7 +81,7 @@ Prefer `catalog().track_info()` when its typed fields are sufficient. Raw querie
 
 `SoloistConfig::new(binary_path, api_key, paths)` defaults to device name SpotCore, an automatically allocated WebSocket port and native data/cache paths. `SoloistProcess::spawn(config).await` owns a child and exposes its `ws_url`; call `kill().await` on the process when finished. The API key must not appear in app logs even though the vendor process interface requires a command argument.
 
-`SoloistBackend::launch`, `launch_with`, `launch_as`, `connect` and `connect_named` provide explicit daemon/backend paths. Use their generated signatures rather than guessing WebSocket parameters. `wait_authenticated()` confirms daemon session readiness, not account-tier eligibility for the unified SDK policy. `NativeConfig`, `NativeProcess` and `NativeManager` are compatibility aliases for the Soloist types. The SDK’s native protocol types describe control messages; they do not expose decoded PCM or encrypted stream contents.
+`SoloistBackend::launch`, `launch_with`, `launch_as`, `connect` and `connect_named` provide explicit daemon/backend paths. Use their generated signatures rather than guessing WebSocket parameters. Socket connection returns without waiting for authentication. `authentication_state()` distinguishes a live unauthenticated daemon from a disconnected socket; `wait_authenticated()` waits for daemon session readiness, not account-tier eligibility for the unified SDK policy. `NativeConfig`, `NativeProcess` and `NativeManager` are compatibility aliases for the Soloist types. The SDK’s native protocol types describe control messages; they do not expose decoded PCM or encrypted stream contents.
 
 ## Browser and host lifecycle reference
 
