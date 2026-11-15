@@ -452,7 +452,6 @@ impl Browser {
     }
 
     /// Calls are bound to one execution context; ambiguous writes are never replayed.
-
     pub async fn call(&self, method: &str, args: Value) -> Result<Value, Error> {
         let status = self.inner.status.borrow().clone();
         if !status.ready {
