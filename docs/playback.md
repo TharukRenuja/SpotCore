@@ -1,5 +1,10 @@
 # Playback and queues
 
+Native snapshots retain Soloist's reported position speed in
+`PlayerSnapshot.raw["speed"]`. Consumers that interpolate progress should validate
+and use this rate when present. Speed controls still use the session's reported
+capability and the existing `set_speed` / Connect control path.
+
 [Controls](#facade-method-reference) · [Events](events.md) · [Models](models.md)
 
 Use one `SpotCore` session for Web playback, optional native audio and remote controls. Before enabling controls in your UI, refresh the state and check its capabilities. Spotify’s account, context, ad and device restrictions still apply.
@@ -44,7 +49,7 @@ async fn queue(spotify: &mut SpotCore, track_uri: String) -> Result<(), spotcore
 
 `Queue` separates `current`, manually `queued`, and context `next_up` items. Preserve exact URI/UID pairs for edits; duplicate track URIs can represent different rows. `clear_queue()` clears user-queued items according to backend semantics.
 
-`insert_into_queue(uris, before)`, `reorder_queue(items, before, after)` and `skip_to_queue(item)` require browser-assisted queue controls. Reordering takes exactly one of `before` or `after`. Cookie-only HTTP returns `Unsupported` for these operations; native audio alone does not supply the page. HTTP supports a single item per queue-add command and restricts state-dependent edits to the active receiver.
+`insert_into_queue(uris, before)` and `reorder_queue(items, before, after)` also have HTTP implementations using Connect's `set_queue` command. Reordering requires exactly one `before` or `after` anchor, identified by URI and UID. Missing, ambiguous and stale anchors are rejected. These HTTP payloads need live verification. `skip_to_queue(item)` remains browser-assisted; applications may instead consume preceding rows with Next commands. HTTP supports a single item per queue-add command and restricts state-dependent edits to the active receiver. `devices().replace_queued(device, uris)` replaces the manual section in one HTTP write, preserving reusable row UIDs and context entries.
 
 ## Podcasts and audiobooks
 
@@ -93,7 +98,23 @@ This example requires `spotcore = { path = "../SpotCore", features = ["native"] 
 
 With `AccountManager`, a saved native key is tried by default after fresh account verification. `manager.prefer_native(false)` selects Web for subsequent opens without deleting the key; new managers default to native preference.
 
-Preview limitation: standalone native playback has worked locally, but managed account startup has also fallen back to Web after authentication. Partial-event handling and startup waiting were patched; those patches have not resolved every reported case. Inspect `native_fallback_reason()` and retain Web fallback in apps.
+Managed native startup first checks the daemon's authentication state. If it is
+not signed in, the SDK looks for an unambiguous matching device in the current
+account's Connect list and submits one paused transfer to activate it. A transfer
+response alone is not success: the daemon must confirm `logged_in`, followed by
+same-account device verification. Existing authenticated daemons skip this
+activation. A paused transfer can move the account away from its current receiver.
+
+A device absent from the account list cannot be authenticated by guessing a
+transfer target. If activation does not produce authentication within the startup
+deadline, the daemon is stopped and started once in Soloist's pairing mode, which
+waits for the official Spotify app to provision the device and keeps that session
+in the data directory. The pairing attempt is made at most once per process, so an
+unpaired device reports `NativeAuthenticationRequired` instead of stalling every
+switch. A disconnected daemon is reported as `Disconnected`, and a timed-out
+discovery or transfer request as `NativeStartupTimeout`; transfers are
+never automatically replayed. If Web fallback also fails, `NativeStartupFailed`
+retains both errors instead of hiding the native cause behind DRM/engine errors.
 
 The separately cached executable is `spotcore-native` (`.exe` on Windows), with install metadata beside it. Managed downloads refresh after 85 days from recorded download time, independently of SDK releases. This is a freshness policy, not proof of a vendor build's expiry. Stop managed daemons before updating. The Soloist API key is passed as an argument because its interface requires it, so it can be visible in process listings.
 
@@ -135,3 +156,50 @@ Receiver arguments are omitted. This table summarizes behavior and selected retu
 | `execute(command)` | Unified `Command` dispatch |
 | `execute_on(device, command)` / `play_on(device, uri)` | Explicit receiver routing; see [devices](devices.md) |
 | `shutdown()` | Consume and stop owned session resources |
+
+Native snapshots read duration from Soloist's decorated playback metadata and
+preserve context and volume. Once startup verifies a receiver in the account,
+the session binds its Connect device ID for subsequent activation and snapshots.
+Initial registration still requires an unambiguous device name in the account.
+
+Applications can set `application_name("Spotifast")` on `AccountManager`,
+`SpotCoreBuilder` or `HostLauncher` to brand managed host processes and login
+windows. Rebuild the launcher and selected host to apply that branding; executable
+filenames and profile storage identifiers remain stable.
+
+HTTP queue reads enrich sparse Connect entries with catalog metadata, preserving
+row URIs, UIDs and order. Home sections use the same metadata cache for incomplete
+cards. The per-API cache holds at most 256 items for ten minutes; failed lookups
+back off for 30 seconds. Each refresh starts at most 24 unique metadata reads,
+with six concurrent reads and a three-second overall enrichment budget. The queue
+itself remains available when individual metadata reads fail.
+
+`native_pairing(true)` on `SpotCoreBuilder`, or `AccountManager::native_pairing(true)`,
+opts an explicit setup into an official-app pairing attempt after an unauthenticated
+native start. It defaults to false so restores do not enter an interactive pairing
+wait or reset stored pairing state. This does not implement automatic cookie pairing.
+
+`devices().queue_snapshot()` returns queue state and context identity without
+waiting for catalog enrichment. `devices().queue()` retains optional enrichment.
+Native `queue_changed`, `context_changed` and `options_changed` events invalidate
+queue state; context and option changes also request a fresh playback snapshot.
+
+## Local device readiness
+
+`SpotCore::local_device()` resolves the session's owned player. Web sessions query the playback backend's browser device list, independently of the public HTTP services API. Native sessions use their bound device ID, with unambiguous configured-name discovery only until an ID is available. Missing registration returns None; services-only sessions return Unsupported.
+
+`activate_local()` transfers to that owned player with playback disabled and waits for activation. It does not start a track. Call it for an explicit local Play or when startup has confirmed no other device is active. Clients should retry read-only discovery while registration is pending, keep playback controls disabled on failure, and avoid equating authenticated services with an activated playback device.
+
+Web player state reads return immediately with cached shuffle capabilities.
+Context-specific shuffle availability refreshes in the background and publishes
+a new snapshot when ready; it never delays core playback state.
+
+`Api::local_playback_state()` reads the local Web receiver independently of a
+mutable playback command. HTTP-only sessions return Unsupported; use
+`devices().playback_state()` for the account's active Connect receiver instead.
+
+`SpotCore::play_items(context, uris, position)` starts an ordered list on this
+SDK's local receiver. `devices().play_items(target, context, uris, position)`
+targets an explicit Connect receiver. Items are sent in one inline context page,
+not as Add to queue commands, so another collection replaces this context's tail
+while genuine manual queue entries remain intact. Lists accept 1 to 1000 items.

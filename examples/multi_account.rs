@@ -18,6 +18,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 sp_dc: Some(cookie.trim().into()),
                 access_token: None,
                 expires_at_ms: None,
+                client_id: None,
+                app_version: None,
             });
             accounts.switch_with(profile).await?;
         } else {

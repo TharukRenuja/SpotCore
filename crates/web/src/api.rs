@@ -56,11 +56,14 @@ fn save_cached_operations(path: &Path, ops: &Operations) {
     }
 }
 
+type CachedMedia = (std::time::Instant, Option<spotcore_core::MediaItem>);
+
 struct Inner {
     browser: Option<Browser>,
     session: Option<WebSession>,
     cookie: Option<crate::cookie::CookieSession>,
     operations: RwLock<Operations>,
+    media_cache: RwLock<BTreeMap<String, CachedMedia>>,
     schema: Value,
     http: Http,
     /// Per-root cache file, so a custom `Paths` keeps its hashes with it.
@@ -97,12 +100,60 @@ impl Api {
 
     /// HTTP-only services with an in-memory sp_dc cookie and lazy automatic token renewal.
     pub fn from_cookie(cookie: impl Into<String>, paths: &Paths) -> Result<Self, Error> {
-        let cookie = crate::cookie::CookieSession::new(cookie.into())?;
+        Self::from_credentials(
+            spotcore_auth::WebCredentials {
+                sp_dc: Some(cookie.into()),
+                access_token: None,
+                expires_at_ms: None,
+                client_id: None,
+                app_version: None,
+            },
+            paths,
+        )
+    }
+
+    /// Reuses a protected saved token when valid, renewing through the cookie when needed.
+    pub fn from_credentials(
+        credentials: spotcore_auth::WebCredentials,
+        paths: &Paths,
+    ) -> Result<Self, Error> {
+        let cookie = crate::cookie::CookieSession::with_credentials(
+            credentials,
+            paths.root().join("cache/cookie-bootstrap.json"),
+        )?;
         let mut api = Self::build(None, None, paths)?;
         Arc::get_mut(&mut api.inner)
             .ok_or_else(|| Error::Backend("shared client during initialization".into()))?
             .cookie = Some(cookie);
         Ok(api)
+    }
+
+    /// Export only to protected credential storage; this never writes token bytes to the cache.
+    pub async fn web_credentials(&self) -> Result<spotcore_auth::WebCredentials, Error> {
+        match &self.inner.cookie {
+            Some(cookie) => Ok(cookie.credentials().await),
+            None => Err(Error::Unsupported),
+        }
+    }
+
+    /// Copies this browser's Spotify session into renewable HTTP services.
+    /// Store the returned credentials only in a protected vault. No browser is closed here.
+    pub async fn http_services(
+        &self,
+        paths: &Paths,
+    ) -> Result<(Self, spotcore_auth::WebCredentials), Error> {
+        let cookie = self.browser()?.session_cookie().await?;
+        let api = Self::from_cookie(cookie.clone(), paths)?;
+        Ok((
+            api,
+            spotcore_auth::WebCredentials {
+                sp_dc: Some(cookie),
+                access_token: None,
+                expires_at_ms: None,
+                client_id: None,
+                app_version: None,
+            },
+        ))
     }
 
     fn build(
@@ -124,6 +175,7 @@ impl Api {
                 session,
                 cookie: None,
                 operations: RwLock::new(ops),
+                media_cache: RwLock::new(BTreeMap::new()),
                 schema: serde_json::from_str(OPERATION_SCHEMA_JSON)
                     .map_err(|_| Error::Backend("invalid bundled operation schema".into()))?,
                 http: Http::new()?,
@@ -131,6 +183,36 @@ impl Api {
             }),
         })
     }
+    pub(crate) fn cached_media(&self, uri: &str) -> Option<spotcore_core::MediaItem> {
+        let cache = self.inner.media_cache.read().ok()?;
+        let (at, item) = cache.get(uri)?;
+        (at.elapsed() < std::time::Duration::from_secs(600))
+            .then(|| item.clone())
+            .flatten()
+    }
+
+    pub(crate) fn should_lookup_media(&self, uri: &str) -> bool {
+        self.inner
+            .media_cache
+            .read()
+            .ok()
+            .and_then(|cache| {
+                cache.get(uri).map(|(at, item)| {
+                    at.elapsed().as_secs() >= if item.is_some() { 600 } else { 30 }
+                })
+            })
+            .unwrap_or(true)
+    }
+
+    pub(crate) fn cache_media(&self, uri: String, item: Option<spotcore_core::MediaItem>) {
+        if let Ok(mut cache) = self.inner.media_cache.write() {
+            if cache.len() >= 256 && !cache.contains_key(&uri) {
+                cache.pop_first();
+            }
+            cache.insert(uri, (std::time::Instant::now(), item));
+        }
+    }
+
     pub async fn connect(endpoint: &str) -> Result<Self, Error> {
         Self::new(Browser::connect(endpoint).await?)
     }
@@ -146,9 +228,9 @@ impl Api {
         self.inner.browser.as_ref().ok_or(Error::Unsupported)
     }
 
-    pub(crate) async fn invalidate_session(&self) {
+    pub(crate) async fn invalidate_session(&self, rejected: &str) {
         if let Some(cookie) = &self.inner.cookie {
-            cookie.invalidate().await;
+            cookie.invalidate(rejected).await;
         }
     }
     pub(crate) fn device_id(&self) -> &str {
@@ -266,6 +348,15 @@ impl Api {
         }
         self.browser()?.call(method, args).await
     }
+    /// Reads this browser's player without borrowing the mutable command client.
+    /// HTTP-only services have no local player; use Devices::playback_state for Connect.
+    pub async fn local_playback_state(
+        &self,
+    ) -> Result<Option<spotcore_core::PlayerSnapshot>, Error> {
+        self.browser()?;
+        crate::mapping::snapshot(&self.call("player.state", json!({})).await?)
+    }
+
     pub async fn services(&self) -> Result<Value, Error> {
         self.call("service.list", json!({})).await
     }
@@ -352,16 +443,18 @@ impl Api {
         if self.inner.browser.is_some() {
             self.call("gql.query", json!({"name":name,"hash":operation.hash,"operation":operation.kind,"variables":variables})).await
         } else {
-            self.inner
-                .http
-                .graphql(
-                    self,
-                    json!({
-                        "operationName":name,"variables":variables,
-                        "extensions":{"persistedQuery":{"version":1,"sha256Hash":operation.hash}}
-                    }),
-                )
-                .await
+            let payload = json!({
+                "operationName":name,"variables":variables,
+                "extensions":{"persistedQuery":{"version":1,"sha256Hash":operation.hash}}
+            });
+            let result = self.inner.http.graphql(self, payload.clone()).await;
+            // A rejected saved token is invalidated by HTTP; only reads may retry after renewal.
+            if operation.kind == "query" && matches!(&result, Err(Error::Http { status: 401, .. }))
+            {
+                self.inner.http.graphql(self, payload).await
+            } else {
+                result
+            }
         }
     }
 
@@ -464,6 +557,30 @@ mod tests {
         .unwrap()
     }
 
+    #[test]
+    fn media_cache_bounds_memory_and_backs_off_failed_reads() {
+        let paths = Paths::new(
+            std::env::temp_dir().join(format!("spotcore-media-cache-{}", uuid::Uuid::new_v4())),
+        );
+        let api = Api::from_session(test_session(), &paths).unwrap();
+        assert!(api.should_lookup_media("missing"));
+        api.cache_media("missing".into(), None);
+        assert!(!api.should_lookup_media("missing"));
+        assert!(api.cached_media("missing").is_none());
+        api.inner
+            .media_cache
+            .write()
+            .unwrap()
+            .get_mut("missing")
+            .unwrap()
+            .0 -= std::time::Duration::from_secs(31);
+        assert!(api.should_lookup_media("missing"));
+        for index in 0..300 {
+            api.cache_media(index.to_string(), None);
+        }
+        assert_eq!(api.inner.media_cache.read().unwrap().len(), 256);
+    }
+
     #[tokio::test]
     async fn http_only_sessions_reject_browser_calls_and_expiry() {
         let paths = Paths::new(
@@ -471,6 +588,10 @@ mod tests {
         );
         let mut api = Api::from_session(test_session(), &paths).unwrap();
         assert!(matches!(api.browser(), Err(Error::Unsupported)));
+        assert!(matches!(
+            api.local_playback_state().await,
+            Err(Error::Unsupported)
+        ));
         assert!(matches!(api.services().await, Err(Error::Unsupported)));
 
         assert!(matches!(
@@ -576,5 +697,38 @@ mod tests {
         assert!(!is_persisted_query_error(&json!({
             "data": {}
         })));
+    }
+}
+
+#[cfg(test)]
+mod saved_http_session_tests {
+    #[tokio::test]
+    async fn cloned_services_share_saved_token_and_invalidation() {
+        let expires = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64
+            + 600_000;
+        let api = super::Api::from_credentials(
+            spotcore_auth::WebCredentials {
+                sp_dc: Some("fixture-cookie".into()),
+                access_token: Some("fixture-token".into()),
+                expires_at_ms: Some(expires),
+                client_id: Some("client".into()),
+                app_version: Some("version".into()),
+            },
+            &spotcore_core::Paths::new(std::env::temp_dir().join("spotcore-saved-token-fixture")),
+        )
+        .unwrap();
+        let clone = api.clone();
+        assert_eq!(
+            clone.session().await.unwrap().access_token.expose(),
+            "fixture-token"
+        );
+        clone.invalidate_session("older-token").await;
+        assert!(api.web_credentials().await.unwrap().access_token.is_some());
+        clone.invalidate_session("fixture-token").await;
+        assert!(api.web_credentials().await.unwrap().access_token.is_none());
+        assert!(api.browser().is_err());
     }
 }

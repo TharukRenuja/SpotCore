@@ -98,7 +98,8 @@ impl From<spotcore::PlaybackEvent> for PlaybackUpdate {
             spotcore::PlaybackEvent::TrackUnavailable(_) => {
                 update.kind = "track_unavailable".into()
             }
-            spotcore::PlaybackEvent::QueueChanged(_) => update.kind = "queue".into(),
+            spotcore::PlaybackEvent::QueueChanged(_)
+            | spotcore::PlaybackEvent::QueueInvalidated => update.kind = "queue".into(),
             spotcore::PlaybackEvent::CapabilitiesChanged(_) => update.kind = "capabilities".into(),
             spotcore::PlaybackEvent::SessionChanged => update.kind = "session".into(),
             _ => update.kind = "other".into(),

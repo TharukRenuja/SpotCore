@@ -15,6 +15,67 @@ pub struct SpotCore {
 }
 
 impl SpotCore {
+    /// Finds this session's player through its backend, independently of HTTP services.
+    pub async fn local_device(&self) -> Result<Option<crate::web::Device>, Error> {
+        #[cfg(feature = "native")]
+        if let Some(native) = &self.player.backend().native {
+            let devices = self.api.devices().list().await?;
+            if let Some(id) = native.device_id() {
+                return Ok(devices.into_iter().find(|device| device.id == id));
+            }
+            return match native.device_name() {
+                Some(name) => crate::spotify::named_device(devices, name),
+                None => Ok(None),
+            };
+        }
+        let web = &self.player.backend().web;
+        if web.role() != crate::BrowserRole::Playback {
+            return Err(Error::Unsupported);
+        }
+        let mut devices = web
+            .api()
+            .devices()
+            .list()
+            .await?
+            .into_iter()
+            .filter(|device| device.local);
+        let device = devices.next();
+        if devices.next().is_some() {
+            return Err(Error::Backend(
+                "More than one local playback device was reported".into(),
+            ));
+        }
+        Ok(device)
+    }
+
+    /// Transfers to the owned player without starting audio. Called for an explicit local Play.
+    pub async fn activate_local(&self) -> Result<(), Error> {
+        #[cfg(feature = "native")]
+        if self.player.backend().native.is_some() {
+            return self.player.backend().activate_native().await;
+        }
+        let web = &self.player.backend().web;
+        let device = self.local_device().await?.ok_or(Error::Disconnected)?;
+        if device.active {
+            return Ok(());
+        }
+        web.api().devices().transfer(&device.id, false).await?;
+        tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                if self
+                    .local_device()
+                    .await?
+                    .is_some_and(|current| current.id == device.id && current.active)
+                {
+                    return Ok(());
+                }
+                tokio::time::sleep(Duration::from_millis(250)).await;
+            }
+        })
+        .await
+        .map_err(|_| Error::Backend("The local playback device did not become active".into()))?
+    }
+
     pub fn new(api: Api, backend: WebBackend) -> Self {
         Self::from_web(Spotify::new(api, backend))
     }
@@ -90,6 +151,11 @@ impl SpotCore {
     pub fn native_fallback_reason(&self) -> Option<&Error> {
         self.native_fallback.as_ref()
     }
+
+    pub(crate) async fn require_web_playback(&self) -> Result<(), Error> {
+        let result = async { self.drm_support().await?.require_playback() }.await;
+        result.map_err(|error| startup_error(self.native_fallback.clone(), error))
+    }
     pub fn playback_mode(&self) -> PlaybackMode {
         self.player.backend().playback_mode()
     }
@@ -121,6 +187,20 @@ impl SpotCore {
     pub async fn play(&mut self, uri: impl Into<String>) -> Result<(), Error> {
         self.player.play(uri).await
     }
+    /// Starts an ordered list on this SDK's local receiver as context rows, not manual queue entries.
+    pub async fn play_items(
+        &mut self,
+        context: Option<&str>,
+        uris: &[String],
+        position: Duration,
+    ) -> Result<(), Error> {
+        let device = self.local_device().await?.ok_or(Error::Disconnected)?;
+        self.api
+            .devices()
+            .play_items(Some(&device.id), context, uris, position)
+            .await
+    }
+
     pub async fn pause(&mut self) -> Result<(), Error> {
         self.player.pause().await
     }
@@ -275,6 +355,7 @@ impl SpotCore {
         credentials: crate::SoloistCredentials,
         paths: &crate::Paths,
         name: Option<&str>,
+        allow_pairing: bool,
     ) {
         let result = async {
             let account = self.api.users().me().await?;
@@ -287,17 +368,44 @@ impl SpotCore {
                 .api_key
                 .filter(|key| !key.trim().is_empty())
                 .ok_or(Error::InvalidInput("native API key is empty"))?;
-            let native = crate::native::NativeBackend::launch_as(
-                key,
+            let mut native = crate::native::NativeBackend::launch_as(
+                key.clone(),
                 paths,
                 name.unwrap_or(crate::native::DEFAULT_DEVICE_NAME),
             )
             .await?;
-            if !native.wait_authenticated(Duration::from_secs(10)).await {
-                return Err(Error::NotAuthenticated);
+            if let Err(error) =
+                authenticate_native(&self.api, &native, Duration::from_secs(10)).await
+            {
+                // Pairing is interactive and must never run during an ordinary restore.
+                if !matches!(error, Error::NativeAuthenticationRequired) || !allow_pairing {
+                    return Err(error);
+                }
+                let device_name = name
+                    .unwrap_or(crate::native::DEFAULT_DEVICE_NAME)
+                    .to_owned();
+                native.shutdown().await?;
+                crate::native::NativeBackend::pair_with(
+                    key.clone(),
+                    paths,
+                    device_name,
+                    Duration::from_secs(60),
+                )
+                .await?;
+                native = crate::native::NativeBackend::launch_as(
+                    key,
+                    paths,
+                    name.unwrap_or(crate::native::DEFAULT_DEVICE_NAME),
+                )
+                .await?;
+                authenticate_native(&self.api, &native, Duration::from_secs(10)).await?;
             }
             // Registration in this Web account prevents controlling another account's daemon.
-            crate::spotify::native_device(&self.api, &native).await?;
+            let device = crate::spotify::native_device(&self.api, &native).await?;
+            native.bind_device_id(device.id);
+            if allow_pairing {
+                native.execute(Command::Pause).await?;
+            }
             Ok(native)
         }
         .await;
@@ -305,6 +413,74 @@ impl SpotCore {
             Ok(native) => self.player.backend_mut().set_native(native),
             Err(error) => self.native_fallback = Some(error),
         }
+    }
+}
+
+#[cfg(feature = "native")]
+async fn authenticate_native(
+    api: &Api,
+    native: &crate::native::NativeBackend,
+    timeout: Duration,
+) -> Result<(), Error> {
+    let deadline = tokio::time::Instant::now() + timeout;
+    let mut pending_operation = None;
+    let result = tokio::time::timeout_at(deadline, async {
+        loop {
+            if native.authentication_state()? {
+                return Ok(());
+            }
+            let name = native
+                .device_name()
+                .ok_or(Error::NativeAuthenticationRequired)?;
+            pending_operation =
+                Some("discovering Spotify devices (no activation request was sent)");
+            let devices = api.devices().list().await?;
+            pending_operation = None;
+            if native.authentication_state()? {
+                return Ok(());
+            }
+            if let Some(device) = crate::spotify::named_device(
+                devices.into_iter().filter(|device| !device.local).collect(),
+                name,
+            )? {
+                // Only an unambiguous receiver in this account can be activated. Never replay a transfer.
+                pending_operation =
+                    Some("activating Soloist (the activation request may have completed)");
+                api.devices().transfer(&device.id, false).await?;
+                pending_operation = None;
+                if native
+                    .wait_authenticated(
+                        deadline.saturating_duration_since(tokio::time::Instant::now()),
+                    )
+                    .await
+                {
+                    return Ok(());
+                }
+                native.authentication_state()?;
+                return Err(Error::NativeAuthenticationRequired);
+            }
+            tokio::time::sleep(Duration::from_millis(250)).await;
+        }
+    })
+    .await;
+    match result.unwrap_or(Err(Error::Timeout)) {
+        Err(Error::Timeout) => match (native.authentication_state(), pending_operation) {
+            (Err(error), _) => Err(error),
+            (Ok(true), _) => Ok(()),
+            (Ok(false), Some(operation)) => Err(Error::NativeStartupTimeout(operation)),
+            (Ok(false), None) => Err(Error::NativeAuthenticationRequired),
+        },
+        result => result,
+    }
+}
+
+pub(crate) fn startup_error(native: Option<Error>, fallback: Error) -> Error {
+    match native {
+        Some(native) => Error::NativeStartupFailed {
+            native: Box::new(native),
+            fallback: Box::new(fallback),
+        },
+        None => fallback,
     }
 }
 
@@ -337,9 +513,7 @@ impl SessionBackend {
     #[cfg(feature = "native")]
     async fn activate_native(&self) -> Result<(), Error> {
         let native = self.native.as_ref().ok_or(Error::Unsupported)?;
-        let name = native.device_name().ok_or(Error::Unsupported)?;
-        let device = crate::spotify::named_device(self.web.api().devices().list().await?, name)?
-            .ok_or(Error::Disconnected)?;
+        let device = crate::spotify::native_device(self.web.api(), native).await?;
         if !device.active {
             self.web.api().devices().transfer(&device.id, false).await?;
             if !native.wait_active(Duration::from_secs(10)).await {
@@ -470,6 +644,11 @@ impl Backend for SessionBackend {
             let capabilities = self.capabilities();
             match &mut event {
                 PlaybackEvent::Snapshot(snapshot) => {
+                    #[cfg(feature = "native")]
+                    if let Some(native) = &self.native {
+                        snapshot.device_id = native.device_id().map(str::to_owned);
+                        snapshot.device_name = native.device_name().map(str::to_owned);
+                    }
                     snapshot.capabilities = capabilities;
                     self.snapshot = Some((**snapshot).clone());
                 }
@@ -598,6 +777,186 @@ use crate::browser_test as test_browser;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn local_identity_comes_from_the_player_and_activation_is_explicit_and_paused() {
+        use serde_json::json;
+        let browser = crate::browser_test::MockBrowser::start().await;
+        browser.response.lock().unwrap()["devices"] = json!([
+            {"id":"owned-web", "name":"Web Player", "isLocal":true, "isActive":false},
+            {"id":"phone", "name":"Phone", "isLocal":false, "isActive":true}
+        ]);
+        let player_api = Api::connect(&browser.endpoint).await.unwrap();
+        let backend = WebBackend::new(player_api.clone()).await.unwrap();
+        let mut sdk = SpotCore::new(player_api, backend);
+        sdk.api = Api::from_cookie(
+            "test-cookie",
+            &crate::Paths::new(std::env::temp_dir().join("spotcore-readiness-test")),
+        )
+        .unwrap();
+        assert_eq!(sdk.local_device().await.unwrap().unwrap().id, "owned-web");
+        assert!(
+            !browser
+                .calls
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|(_, args)| args["service"] == "ConnectTransferAPI")
+        );
+        sdk.activate_local().await.unwrap();
+        let calls = browser.calls.lock().unwrap();
+        let (_, args) = calls
+            .iter()
+            .find(|(_, args)| args["service"] == "ConnectTransferAPI")
+            .unwrap();
+        assert_eq!(args["args"], json!(["owned-web", {"playOnTransfer":false}]));
+        drop(calls);
+        assert!(sdk.local_device().await.unwrap().unwrap().active);
+        browser.response.lock().unwrap()["devices"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"id":"ambiguous", "name":"Another", "isLocal":true, "isActive":false}));
+        assert!(sdk.local_device().await.is_err());
+    }
+
+    #[test]
+    fn native_failure_survives_a_browser_fallback_failure() {
+        let error = startup_error(
+            Some(Error::NativeAuthenticationRequired),
+            Error::DrmUnavailable("missing DRM".into()),
+        );
+        assert!(
+            matches!(&error, Error::NativeStartupFailed { native, fallback } if **native == Error::NativeAuthenticationRequired && matches!(**fallback, Error::DrmUnavailable(_)))
+        );
+        assert!(error.to_string().contains("Soloist"));
+        assert!(error.to_string().contains("missing DRM"));
+        assert_eq!(
+            startup_error(None, Error::Disconnected),
+            Error::Disconnected
+        );
+    }
+
+    #[cfg(feature = "native")]
+    #[tokio::test]
+    async fn connect_activation_requires_daemon_confirmation_and_is_not_replayed() {
+        use futures_util::{SinkExt, StreamExt};
+        use serde_json::json;
+        use tokio_tungstenite::tungstenite::Message;
+        for (name, confirm, initially_authenticated, hold, expected) in [
+            ("Test native", true, false, None, Ok(())),
+            (
+                "Test native",
+                false,
+                false,
+                None,
+                Err(Error::NativeAuthenticationRequired),
+            ),
+            (
+                "Unregistered device",
+                false,
+                false,
+                None,
+                Err(Error::NativeAuthenticationRequired),
+            ),
+            ("Test native", false, true, None, Ok(())),
+            (
+                "Test native",
+                true,
+                false,
+                Some("ConnectDevicesAPI"),
+                Ok(()),
+            ),
+            (
+                "Test native",
+                false,
+                false,
+                Some("ConnectDevicesAPI"),
+                Err(Error::NativeStartupTimeout(
+                    "discovering Spotify devices (no activation request was sent)",
+                )),
+            ),
+            (
+                "Test native",
+                false,
+                false,
+                Some("ConnectTransferAPI"),
+                Err(Error::NativeStartupTimeout(
+                    "activating Soloist (the activation request may have completed)",
+                )),
+            ),
+        ] {
+            let browser = super::test_browser::MockBrowser::start().await;
+            browser.response.lock().unwrap()["hold_service"] = serde_json::json!(hold);
+            let api = Api::connect(&browser.endpoint).await.unwrap();
+            let calls = browser.calls.clone();
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let endpoint = format!("ws://{}", listener.local_addr().unwrap());
+            let server = tokio::spawn(async move {
+                let (stream, _) = listener.accept().await.unwrap();
+                let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+                socket
+                    .send(Message::Text(
+                        json!({"type":"auth_state","logged_in":initially_authenticated})
+                            .to_string()
+                            .into(),
+                    ))
+                    .await
+                    .unwrap();
+                let mut sent = false;
+                loop {
+                    tokio::select! {
+                        packet = socket.next() => if packet.is_none() { break; },
+                        _ = tokio::time::sleep(Duration::from_millis(5)) => {
+                            let transferred = calls.lock().unwrap().iter().any(|(method, args)| method == "service.call" && args["service"] == "ConnectTransferAPI" && args["method"] == "transferPlayback");
+                            let discovery_pending = calls.lock().unwrap().iter().any(|(method, args)| method == "service.call" && args["service"] == "ConnectDevicesAPI");
+                            if confirm && (transferred || (hold == Some("ConnectDevicesAPI") && discovery_pending)) && !sent {
+                                socket.send(Message::Text(json!({"type":"auth_state","logged_in":true}).to_string().into())).await.unwrap();
+                                sent = true;
+                            }
+                        }
+                    }
+                }
+            });
+            let native = tokio::time::timeout(
+                Duration::from_millis(250),
+                crate::native::NativeBackend::connect_named(&endpoint, name),
+            )
+            .await
+            .expect("socket connection must not wait for authentication")
+            .unwrap();
+            if initially_authenticated {
+                assert!(native.wait_authenticated(Duration::from_secs(1)).await);
+            }
+            assert_eq!(
+                authenticate_native(&api, &native, Duration::from_millis(200)).await,
+                expected
+            );
+            let calls = browser.calls.lock().unwrap();
+            let transfers: Vec<_> = calls
+                .iter()
+                .filter(|(method, args)| {
+                    method == "service.call" && args["method"] == "transferPlayback"
+                })
+                .collect();
+            assert_eq!(
+                transfers.len(),
+                usize::from(
+                    name == "Test native"
+                        && !initially_authenticated
+                        && hold != Some("ConnectDevicesAPI")
+                )
+            );
+            if let Some((_, args)) = transfers.first() {
+                assert_eq!(
+                    args["args"],
+                    json!(["native-test", {"playOnTransfer":false}])
+                );
+            }
+            drop(calls);
+            drop(native);
+            server.abort();
+        }
+    }
     #[cfg(feature = "native")]
     #[tokio::test]
     async fn native_playback_and_web_controls_share_one_session() {

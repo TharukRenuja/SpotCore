@@ -10,6 +10,10 @@ pub(super) async fn call(
     arguments: Value,
 ) -> Result<Value, BindingError> {
     match method {
+        "activate_local" => {
+            empty(arguments)?;
+            encode(sdk.activate_local().await?)
+        }
         "add_to_queue" => {
             #[derive(serde::Deserialize)]
             #[serde(deny_unknown_fields)]
@@ -84,6 +88,10 @@ pub(super) async fn call(
             empty(arguments)?;
             encode(sdk.is_playing())
         }
+        "local_device" => {
+            empty(arguments)?;
+            encode(sdk.local_device().await?)
+        }
         "next" => {
             empty(arguments)?;
             encode(sdk.next().await?)
@@ -117,6 +125,24 @@ pub(super) async fn call(
                     p.track,
                     p.index,
                     p.position.map(std::time::Duration::from_millis),
+                )
+                .await?,
+            )
+        }
+        "play_items" => {
+            #[derive(serde::Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Args {
+                context: Option<String>,
+                uris: Vec<String>,
+                position: u64,
+            }
+            let p: Args = parse(arguments)?;
+            encode(
+                sdk.play_items(
+                    p.context.as_deref(),
+                    &p.uris,
+                    std::time::Duration::from_millis(p.position),
                 )
                 .await?,
             )

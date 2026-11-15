@@ -427,6 +427,13 @@ fn playlist_adders(response: &Value, paging: Paging) -> Result<Page<PlaylistAdde
     })
 }
 
+/// A playlist position, retained even when its media metadata is unavailable.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PlaylistRow {
+    pub uid: Option<String>,
+    pub item: Option<MediaItem>,
+}
+
 pub struct Playlists<'a>(pub(crate) &'a Api);
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[non_exhaustive]
@@ -453,6 +460,63 @@ impl Playlists<'_> {
         uri(value)?;
         paging.validate()?;
         page(&self.0.gql("fetchPlaylistContents",json!({"uri":value,"offset":paging.offset,"limit":paging.limit,"includeEpisodeContentRatingsV2":true})).await?,"/data/playlistV2/content",paging)
+    }
+    /// Keeps unavailable slots and exact row UIDs for positional display and edits.
+    pub async fn rows(&self, value: &str, paging: Paging) -> Result<Page<PlaylistRow>, Error> {
+        uri(value)?;
+        paging.validate()?;
+        let body = self.0.gql("fetchPlaylistContents",json!({"uri":value,"offset":paging.offset,"limit":paging.limit,"includeEpisodeContentRatingsV2":true})).await?;
+        let mut page =
+            crate::mapping::page_map(&body, "/data/playlistV2/content", paging, |row| {
+                Some(PlaylistRow {
+                    uid: row["uid"]
+                        .as_str()
+                        .filter(|uid| !uid.is_empty())
+                        .map(str::to_owned),
+                    item: crate::mapping::item(row),
+                })
+            })?;
+        use futures_util::{StreamExt, stream};
+        let api = self.0;
+        let missing = page
+            .items
+            .iter_mut()
+            .filter_map(|row| row.item.as_mut())
+            .filter(|item| {
+                item.uri.starts_with("spotify:episode:")
+                    && super::EpisodeInfo::try_from((**item).clone()).map_or(true, |info| {
+                        info.duration_ms.is_none_or(|duration| duration == 0)
+                            || info.show.is_none()
+                            || info.description.as_deref().is_none_or(str::is_empty)
+                    })
+            });
+        let enrich = stream::iter(missing)
+            .map(|item| async move {
+                if let Ok(info) = api.podcasts().episode_info(&item.uri).await {
+                    if !info.name.is_empty() {
+                        item.name = info.name;
+                    }
+                    item.duration_ms = info.duration_ms.or(item.duration_ms);
+                    if !info.images.is_empty() {
+                        item.images = info.images;
+                    }
+                    if !item.raw.is_object() {
+                        item.raw = json!({});
+                    }
+                    if let Some(fields) = info.raw.as_object() {
+                        for (key, value) in fields {
+                            if !value.is_null() {
+                                item.raw[key] = value.clone();
+                            }
+                        }
+                    }
+                }
+            })
+            .buffer_unordered(4)
+            .collect::<Vec<_>>();
+        // Metadata is best-effort: one unavailable episode must not hide the playlist.
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(8), enrich).await;
+        Ok(page)
     }
     /// Known adders for one page of playlist rows; missing/private adders are omitted.
     pub async fn added_by(
@@ -602,6 +666,23 @@ impl Playlists<'_> {
         }
         for chunk in tracks.chunks(100) {
             self.0.gql("addToPlaylist",json!({"playlistUri":value,"playlistItemUris":chunk,"newPosition":{"moveType":"BOTTOM_OF_PLAYLIST","fromUid":null}})).await?;
+        }
+        Ok(())
+    }
+    /// Inserts before an exact playlist row, preserving submitted track order.
+    pub async fn insert_tracks(
+        &self,
+        value: &str,
+        tracks: &[String],
+        before_uid: &str,
+    ) -> Result<(), Error> {
+        uri(value)?;
+        nonempty(before_uid)?;
+        for track in tracks {
+            uri(track)?;
+        }
+        for chunk in tracks.chunks(100) {
+            self.0.gql("addToPlaylist",json!({"playlistUri":value,"playlistItemUris":chunk,"newPosition":{"moveType":"BEFORE_UID","fromUid":before_uid}})).await?;
         }
         Ok(())
     }

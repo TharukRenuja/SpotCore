@@ -199,7 +199,8 @@ pub(crate) fn track(value: Value) -> Result<TrackInfo, Error> {
         album_images: images(album),
         track_number: number(&value, "/trackNumber").and_then(|v| v.try_into().ok()),
         disc_number: number(&value, "/discNumber").and_then(|v| v.try_into().ok()),
-        duration_ms: number(&value, "/duration/totalMilliseconds"),
+        duration_ms: number(&value, "/duration/totalMilliseconds")
+            .or_else(|| number(&value, "/trackDuration/totalMilliseconds")),
         explicit: value["contentRating"]["label"] == "EXPLICIT",
         playable: value["playability"]["playable"].as_bool(),
         popularity: None,
@@ -273,15 +274,47 @@ pub(crate) fn episode(value: Value) -> Result<EpisodeInfo, Error> {
         name,
         description: text(&value, "/description"),
         images: images(&value),
-        duration_ms: number(&value, "/duration/totalMilliseconds"),
-        release_date: text(&value, "/releaseDate/isoString"),
+        duration_ms: number(&value, "/duration/totalMilliseconds")
+            .filter(|duration| *duration > 0)
+            .or_else(|| {
+                number(&value, "/episodeDuration/totalMilliseconds")
+                    .filter(|duration| *duration > 0)
+            })
+            .or_else(|| number(&value, "/duration_ms")),
+        release_date: text(&value, "/releaseDate/isoString")
+            .or_else(|| text(&value, "/release_date")),
         explicit: value["contentRating"]["label"] == "EXPLICIT",
         resume_position_ms: number(&value, "/playedState/playPositionMilliseconds"),
-        show: reference(&value["podcastV2"]["data"]),
+        show: reference(&value["podcastV2"]["data"])
+            .or_else(|| reference(&value["podcast"]["data"]))
+            .or_else(|| reference(&value["podcast"]))
+            .or_else(|| reference(&value["show"])),
         external_urls: urls(&value),
         raw: value,
     })
 }
+impl TryFrom<spotcore_core::MediaItem> for EpisodeInfo {
+    type Error = Error;
+    fn try_from(item: spotcore_core::MediaItem) -> Result<Self, Self::Error> {
+        let mut raw = item.raw;
+        if !raw.is_object() {
+            raw = serde_json::json!({});
+        }
+        if raw["uri"].as_str().is_none_or(str::is_empty) {
+            raw["uri"] = item.uri.into();
+        }
+        if raw["name"].as_str().is_none_or(str::is_empty) {
+            raw["name"] = item.name.into();
+        }
+        let mut info = episode(raw)?;
+        info.duration_ms = info.duration_ms.or(item.duration_ms);
+        if info.images.is_empty() {
+            info.images = item.images;
+        }
+        Ok(info)
+    }
+}
+
 pub(crate) fn playlist(value: Value) -> Result<PlaylistInfo, Error> {
     let (uri, name) = identity(&value, "playlist")?;
     let owner = value.pointer("/ownerV2/data").filter(|v| v.is_object());
@@ -338,6 +371,24 @@ impl Playlists<'_> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn playlist_episode_metadata_retains_show_duration_and_description() {
+        let item = spotcore_core::MediaItem {
+            uri: "spotify:episode:one".into(),
+            name: "Episode one".into(),
+            kind: spotcore_core::MediaKind::Episode,
+            images: vec![],
+            duration_ms: None,
+            uid: Some("row".into()),
+            raw: serde_json::json!({"episodeDuration":{"totalMilliseconds":7500000},"description":"Episode description", "show":{"uri":"spotify:show:parent","name":"Parent show"},"release_date":"2026-11-12"}),
+        };
+        let info = super::EpisodeInfo::try_from(item).unwrap();
+        assert_eq!(info.duration_ms, Some(7500000));
+        assert_eq!(info.show.unwrap().name, "Parent show");
+        assert_eq!(info.description.as_deref(), Some("Episode description"));
+        assert_eq!(info.release_date.as_deref(), Some("2026-11-12"));
+    }
+
     use super::*;
     fn fixture(kind: &str) -> Value {
         let all: Value =

@@ -19,6 +19,10 @@ pub struct WebCredentials {
     pub sp_dc: Option<String>,
     pub access_token: Option<String>,
     pub expires_at_ms: Option<u64>,
+    #[serde(default)]
+    pub client_id: Option<String>,
+    #[serde(default)]
+    pub app_version: Option<String>,
 }
 
 impl fmt::Debug for WebCredentials {
@@ -57,6 +61,8 @@ pub struct AccountProfile {
     #[serde(default)]
     pub tier_checked_at_ms: Option<u64>,
     #[serde(default)]
+    pub prefer_native: Option<bool>,
+    #[serde(default)]
     pub web: Option<WebCredentials>,
     #[serde(default)]
     pub soloist: Option<SoloistCredentials>,
@@ -71,6 +77,7 @@ impl AccountProfile {
             display_name: None,
             tier: None,
             tier_checked_at_ms: None,
+            prefer_native: None,
             web: None,
             soloist: None,
         }
@@ -85,7 +92,7 @@ impl AccountProfile {
     }
 
     pub fn playback_mode(&self) -> PlaybackMode {
-        if self.native_available() {
+        if self.native_available() && self.prefer_native != Some(false) {
             PlaybackMode::Native
         } else {
             PlaybackMode::Web
@@ -115,6 +122,8 @@ pub struct AccountMetadata {
     pub display_name: Option<String>,
     pub tier: Option<AccountTier>,
     pub tier_checked_at_ms: Option<u64>,
+    #[serde(default)]
+    pub prefer_native: Option<bool>,
     #[serde(default)]
     pub credential_ref: Option<String>,
 }
@@ -272,6 +281,7 @@ impl AccountStore {
             display_name: profile.display_name.clone(),
             tier: profile.tier,
             tier_checked_at_ms: profile.tier_checked_at_ms,
+            prefer_native: profile.prefer_native,
             credential_ref: has_secrets.then_some(reference.clone()),
         };
         let data = serde_json::to_vec_pretty(&metadata).map_err(|_| invalid_record())?;
@@ -323,6 +333,7 @@ impl AccountStore {
             display_name: metadata.display_name,
             tier: metadata.tier,
             tier_checked_at_ms: metadata.tier_checked_at_ms,
+            prefer_native: metadata.prefer_native,
             web: secrets.web,
             soloist: secrets.soloist,
         };
@@ -465,6 +476,38 @@ fn write_private(path: &Path, data: &[u8]) -> std::io::Result<()> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn playback_preference_survives_saved_account_reload() {
+        let store = temp_store("playback_preference");
+        let mut profile = AccountProfile::new("listener");
+        for preference in [Some(false), Some(true), None] {
+            profile.prefer_native = preference;
+            store.save_profile(&profile).unwrap();
+            assert_eq!(
+                store
+                    .load_profile("listener")
+                    .unwrap()
+                    .unwrap()
+                    .prefer_native,
+                preference
+            );
+        }
+        let old: AccountProfile =
+            serde_json::from_str(r#"{"canonical_username":"listener"}"#).unwrap();
+        assert_eq!(old.prefer_native, None);
+        let _ = std::fs::remove_dir_all(store.base_dir);
+    }
+
+    #[test]
+    fn old_web_credentials_remain_readable_without_cached_token_metadata() {
+        let web: WebCredentials =
+            serde_json::from_str(r#"{"sp_dc":"fixture","access_token":null,"expires_at_ms":null}"#)
+                .unwrap();
+        assert!(web.client_id.is_none());
+        assert!(web.app_version.is_none());
+        assert!(!format!("{web:?}").contains("fixture"));
+    }
+
     #[derive(Default)]
     struct TestVault(std::sync::Mutex<std::collections::HashMap<String, AccountSecrets>>);
     impl CredentialStore for TestVault {
@@ -491,6 +534,8 @@ mod tests {
             sp_dc: Some(sp_dc.to_string()),
             access_token: Some("web-token".to_string()),
             expires_at_ms: Some(1_900_000_000_000),
+            client_id: None,
+            app_version: None,
         }
     }
 

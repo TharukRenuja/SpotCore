@@ -9,6 +9,8 @@ license.workspace = true
 [dependencies]
 spotcore-core.workspace = true
 spotcore-auth.workspace = true
+# Share the existing process supervisor with applications that embed the launcher.
+spotcore-engine = { path = "../../host/launcher" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt", "process", "sync", "net", "time", "macros", "io-util"] }

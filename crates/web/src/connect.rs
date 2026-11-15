@@ -17,17 +17,44 @@ fn is_ad(value: &Value) -> bool {
         || value["metadata"]["is_advertisement"] == true
         || value["metadata"]["ad_id"].is_string()
 }
-fn track(value: &Value) -> Value {
+pub(crate) fn track(value: &Value) -> Value {
     if value.is_null() {
         return Value::Null;
     }
     let metadata = &value["metadata"];
-    json!({"uri":value["uri"],"uid":value["uid"],"name":metadata["title"],"durationMs":metadata["duration"].as_str().and_then(|n|n.parse::<u64>().ok()),
-        "kind":if is_ad(value){"ad"}else{"track"},"metadata":metadata})
+    let duration = metadata
+        .get("duration")
+        .and_then(|value| value.as_u64().or_else(|| value.as_str()?.parse().ok()));
+    let images = metadata
+        .get("image_url")
+        .and_then(Value::as_str)
+        .map(|url| json!([{"url":crate::mapping::artwork_url(url)}]))
+        .unwrap_or_else(|| json!([]));
+    json!({"uri":value["uri"],"uid":value["uid"],"name":metadata["title"],"durationMs":duration,
+        "kind":if is_ad(value){"ad"}else{"track"},"metadata":metadata,
+        "artists":[{"uri":metadata["artist_uri"],"name":metadata["artist_name"]}],
+        "album":{"uri":metadata["album_uri"],"name":metadata["album_title"],"images":images}})
 }
 fn queued(value: &Value) -> bool {
     !is_ad(value)
         && (value["metadata"]["is_queued"] == "true" || value["metadata"]["is_queued"] == true)
+}
+
+fn queue_view(state: &Value) -> Result<Value, Error> {
+    let next = rows(state, "next_tracks")?;
+    // Connect includes hidden future context iterations that the Web player's queue omits.
+    let visible = || {
+        next.iter().filter(|row| {
+            row["uri"] != "spotify:delimiter"
+                && row["metadata"]["hidden"] != "true"
+                && row["metadata"]["hidden"] != true
+        })
+    };
+    Ok(
+        json!({"contextUri":state["context_uri"],"current":track(&state["track"]),
+        "queued":visible().filter(|row| queued(row)).map(track).collect::<Vec<_>>(),
+        "nextUp":visible().filter(|row| !queued(row)).map(track).collect::<Vec<_>>()}),
+    )
 }
 fn rows(state: &Value, key: &str) -> Result<Vec<Value>, Error> {
     state[key].as_array().cloned().ok_or_else(|| {
@@ -116,12 +143,179 @@ pub(crate) fn snapshot(cluster: &Value) -> Value {
         "isPaused":state["is_paused"].as_bool().unwrap_or(true),"isBuffering":state["is_buffering"],"shuffle":state["options"]["shuffling_context"],"smartShuffle":smart,
         "repeat":if state["options"]["repeating_track"]==true{2}else if state["options"]["repeating_context"]==true{1}else{0}})
 }
+fn queue_position(rows: &[Value], wanted: &Value) -> Result<usize, Error> {
+    let uid = wanted["uid"]
+        .as_str()
+        .filter(|uid| !uid.is_empty())
+        .ok_or(Error::InvalidInput("queue editing requires exact UIDs"))?;
+    let matches: Vec<_> = rows
+        .iter()
+        .enumerate()
+        .filter(|(_, row)| {
+            !is_ad(row)
+                && row["uri"] != "spotify:delimiter"
+                && row["metadata"]["hidden"] != "true"
+                && row["metadata"]["hidden"] != true
+                && row["uid"] == uid
+                && row["uri"] == wanted["uri"]
+        })
+        .map(|(index, _)| index)
+        .collect();
+    if matches.len() != 1 {
+        return Err(Error::InvalidInput(
+            "queue row changed; refresh before editing",
+        ));
+    }
+    Ok(matches[0])
+}
+
+fn new_queue_rows(args: &Value) -> Result<Vec<Value>, Error> {
+    let uris = args["uris"]
+        .as_array()
+        .filter(|uris| uris.len() <= 500)
+        .ok_or(Error::InvalidInput("queue edit accepts at most 500 URIs"))?;
+    uris.iter().map(|value| {
+        let uri = value.as_str().ok_or(Error::InvalidInput("invalid queue URI"))?;
+        if !uri.starts_with("spotify:track:") && !uri.starts_with("spotify:episode:") {
+            return Err(Error::InvalidInput("only tracks and episodes can be queued"));
+        }
+        crate::domains::uri(uri)?;
+        Ok(json!({"uri":uri,"uid":uuid::Uuid::new_v4().simple().to_string(),"provider":"queue","metadata":{"is_queued":"true"}}))
+    }).collect()
+}
+
+fn edit_queue(method: &str, args: &Value, state: &Value) -> Result<Value, Error> {
+    let mut next = rows(state, "next_tracks")?;
+    let previous = rows(state, "prev_tracks")?;
+    match method {
+        "queue.insert" => {
+            let mut insert = new_queue_rows(args)?;
+            if insert.is_empty() {
+                return Err(Error::InvalidInput("no queue URIs"));
+            }
+            if args["queued"] == false {
+                for row in &mut insert {
+                    row["provider"] = json!("context");
+                    row["metadata"]["is_queued"] = json!("false");
+                }
+            }
+            if !args["before"].is_null() && !args["after"].is_null() {
+                return Err(Error::InvalidInput("queue insertion accepts one anchor"));
+            }
+            let at = if !args["after"].is_null() {
+                queue_position(&next, &args["after"])? + 1
+            } else if args["before"].is_null() {
+                next.iter().position(queued).unwrap_or_else(|| {
+                    next.iter()
+                        .position(|row| !is_ad(row))
+                        .unwrap_or(next.len())
+                })
+            } else {
+                queue_position(&next, &args["before"])?
+            };
+            next.splice(at..at, insert);
+        }
+        "queue.reorder" => {
+            let selected = args["items"]
+                .as_array()
+                .filter(|items| !items.is_empty())
+                .ok_or(Error::InvalidInput("no queue rows selected"))?;
+            let mut positions = std::collections::BTreeSet::new();
+            let mut moved = Vec::new();
+            for item in selected {
+                let at = queue_position(&next, item)?;
+                if !positions.insert(at) {
+                    return Err(Error::InvalidInput("queue row selected twice"));
+                }
+                let mut row = next[at].clone();
+                if let Some(manual) = args["queued"]
+                    .as_bool()
+                    .filter(|manual| *manual != queued(&row))
+                {
+                    row["provider"] = json!(if manual { "queue" } else { "context" });
+                    if !row["metadata"].is_object() {
+                        row["metadata"] = json!({});
+                    }
+                    row["metadata"]["is_queued"] = json!(if manual { "true" } else { "false" });
+                }
+                moved.push(row);
+            }
+            let before = !args["before"].is_null();
+            let after = !args["after"].is_null();
+            if !before && !after && args["queued"].is_boolean() {
+                for row in moved {
+                    let at = queue_position(&next, &row)?;
+                    next[at] = row;
+                }
+            } else {
+                if before == after {
+                    return Err(Error::InvalidInput("queue reorder needs one anchor"));
+                }
+                let anchor = if before {
+                    &args["before"]
+                } else {
+                    &args["after"]
+                };
+                if positions.contains(&queue_position(&next, anchor)?) {
+                    return Err(Error::InvalidInput(
+                        "queue anchor is part of the moved selection",
+                    ));
+                }
+                for at in positions.into_iter().rev() {
+                    next.remove(at);
+                }
+                let at = queue_position(&next, anchor)? + usize::from(after);
+                next.splice(at..at, moved);
+            }
+        }
+        "queue.replace" => {
+            let mut replacement = new_queue_rows(args)?;
+            let mut existing: Vec<_> = next.iter().filter(|row| queued(row)).cloned().collect();
+            for row in &mut replacement {
+                if let Some(at) = existing.iter().position(|old| old["uri"] == row["uri"]) {
+                    *row = existing.remove(at);
+                }
+            }
+            let at = next.iter().position(queued).unwrap_or_else(|| {
+                next.iter()
+                    .position(|row| !is_ad(row))
+                    .unwrap_or(next.len())
+            });
+            next.retain(|row| !queued(row));
+            next.splice(at..at, replacement);
+        }
+        _ => return Err(Error::Unsupported),
+    }
+    Ok(json!({"next_tracks":next,"prev_tracks":previous}))
+}
+
 fn command(method: &str, args: &Value, state: &Value) -> Result<(Value, &'static str), Error> {
     let mut value = json!({});
     let (endpoint, restriction) = match method {
         "player.pause" => ("pause", "pausing"),
         "player.resume" => ("resume", "resuming"),
         "player.next" => ("skip_next", "skipping_next"),
+        "queue.skipTo" => {
+            let uri = args["uri"]
+                .as_str()
+                .ok_or(Error::InvalidInput("missing queue URI"))?;
+            crate::domains::uri(uri)?;
+            let uid = args["uid"]
+                .as_str()
+                .filter(|uid| !uid.is_empty())
+                .ok_or(Error::InvalidInput("queue item has no uid"))?;
+            let next = rows(state, "next_tracks")?;
+            if !next.iter().any(|row| {
+                row["uri"] == uri
+                    && row["uid"] == uid
+                    && row["metadata"]["hidden"] != "true"
+                    && row["metadata"]["hidden"] != true
+            }) {
+                return Err(Error::InvalidInput("queue occurrence is no longer present"));
+            }
+            value = json!({"track":{"uri":uri,"uid":uid}});
+            ("skip_next", "skipping_next")
+        }
         "player.previous" => ("skip_prev", "skipping_prev"),
         "player.seek" => {
             let ms = args["positionMs"]
@@ -184,7 +378,29 @@ fn command(method: &str, args: &Value, state: &Value) -> Result<(Value, &'static
                 }
                 options["seek_to"] = json!(ms);
             }
-            value = json!({"context":{"uri":uri,"url":format!("context://{uri}"),"metadata":{}},"options":options});
+            let mut context = json!({"uri":uri,"url":format!("context://{uri}"),"metadata":{}});
+            if let Some(order) = args.get("order") {
+                let order = order
+                    .as_array()
+                    .filter(|items| !items.is_empty() && items.len() <= 1000)
+                    .ok_or(Error::InvalidInput("invalid ordered playback list"))?;
+                let tracks = order
+                    .iter()
+                    .map(|item| {
+                        let item = item
+                            .as_str()
+                            .ok_or(Error::InvalidInput("invalid playback URI"))?;
+                        crate::domains::uri(item)?;
+                        Ok(json!({"uri":item}))
+                    })
+                    .collect::<Result<Vec<_>, Error>>()?;
+                context["pages"] = json!([{"tracks":tracks}]);
+                context["url"] = json!(format!(
+                    "context://{uri}?order={}",
+                    uuid::Uuid::new_v4().simple()
+                ));
+            }
+            value = json!({"context":context,"options":options});
             ("play", "playing")
         }
         "queue.add" => {
@@ -201,6 +417,10 @@ fn command(method: &str, args: &Value, state: &Value) -> Result<(Value, &'static
             value = json!({"track":{"uri":uri,"provider":"queue","metadata":{"is_queued":"true"}}});
             ("add_to_queue", "inserting_into_next_tracks")
         }
+        "queue.insert" | "queue.reorder" | "queue.replace" => {
+            value = edit_queue(method, args, state)?;
+            ("set_queue", "setting_queue")
+        }
         "queue.clear" | "queue.remove" => {
             let mut next = rows(state, "next_tracks")?;
             let previous = rows(state, "prev_tracks")?;
@@ -216,11 +436,13 @@ fn command(method: &str, args: &Value, state: &Value) -> Result<(Value, &'static
                 {
                     return Err(Error::InvalidInput("queue removal requires exact UIDs"));
                 }
+                for item in remove {
+                    queue_position(&next, item)?;
+                }
                 next.retain(|item| {
-                    !queued(item)
-                        || !remove.iter().any(|wanted| {
-                            wanted["uid"] == item["uid"] && wanted["uri"] == item["uri"]
-                        })
+                    !remove
+                        .iter()
+                        .any(|wanted| wanted["uid"] == item["uid"] && wanted["uri"] == item["uri"])
                 });
             }
             value = json!({"next_tracks":next,"prev_tracks":previous});
@@ -263,7 +485,12 @@ fn target_state<'a>(cluster: &'a Value, device: &str, method: &str) -> Result<&'
     }
     if matches!(
         method,
-        "queue.clear" | "queue.remove" | "player.setShuffleMode"
+        "queue.clear"
+            | "queue.remove"
+            | "queue.insert"
+            | "queue.reorder"
+            | "queue.replace"
+            | "player.setShuffleMode"
     ) {
         return Err(Error::Unsupported);
     }
@@ -294,9 +521,13 @@ pub(crate) async fn call_to(
             | "player.setSpeed"
             | "volume.set"
             | "volume.get"
+            | "queue.skipTo"
             | "queue.clear"
             | "queue.remove"
             | "queue.add"
+            | "queue.insert"
+            | "queue.reorder"
+            | "queue.replace"
     ) {
         return Err(Error::Unsupported);
     }
@@ -310,10 +541,7 @@ pub(crate) async fn call_to(
             if state.is_null() {
                 return Ok(Value::Null);
             }
-            let next = rows(state, "next_tracks")?;
-            return Ok(
-                json!({"current":track(&state["track"]),"queued":next.iter().filter(|v|queued(v)).map(track).collect::<Vec<_>>(),"nextUp":next.iter().filter(|v|!queued(v)).map(track).collect::<Vec<_>>()}),
-            );
+            return queue_view(state);
         }
     } else if matches!(method, "player.state" | "player.queue") {
         return Err(Error::Unsupported);
@@ -386,7 +614,207 @@ pub(crate) async fn call_to(
 }
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn ordered_playback_uses_context_tracks_without_creating_manual_rows() {
+        let state = serde_json::json!({"next_tracks":[{"uri":"spotify:track:manual","uid":"manual","metadata":{"is_queued":"true"}}]});
+        let args = serde_json::json!({"contextUri":"spotify:playlist:sorted", "order":["spotify:track:b","spotify:track:a","spotify:track:b"], "index":0, "positionMs":1234});
+        let (body, restriction) = super::command("player.play", &args, &state).unwrap();
+        assert_eq!(restriction, "playing");
+        assert_eq!(body["context"]["uri"], "spotify:playlist:sorted");
+        assert_eq!(
+            body["context"]["pages"][0]["tracks"],
+            serde_json::json!([
+                {"uri":"spotify:track:b"},{"uri":"spotify:track:a"},{"uri":"spotify:track:b"}
+            ])
+        );
+        assert_eq!(body["options"]["skip_to"]["track_index"], 0);
+        assert_eq!(body["options"]["seek_to"], 1234);
+        assert!(body.get("next_tracks").is_none());
+        assert_eq!(state["next_tracks"][0]["uid"], "manual");
+        for order in [
+            serde_json::json!([]),
+            serde_json::json!([null]),
+            serde_json::json!(["https://example.com"]),
+        ] {
+            let mut invalid = args.clone();
+            invalid["order"] = order;
+            assert!(super::command("player.play", &invalid, &state).is_err());
+        }
+    }
+
+    #[test]
+    fn selected_queue_occurrence_is_targeted_in_one_skip() {
+        let state = serde_json::json!({"next_tracks":[
+            {"uri":"spotify:track:same","uid":"first"},
+            {"uri":"spotify:track:same","uid":"second"}
+        ]});
+        let args = serde_json::json!({"uri":"spotify:track:same","uid":"second"});
+        let (body, _) = super::command("queue.skipTo", &args, &state).unwrap();
+        assert_eq!(body["endpoint"], "skip_next");
+        assert_eq!(body["track"]["uid"], "second");
+        assert!(
+            super::command(
+                "queue.skipTo",
+                &serde_json::json!({"uri":"spotify:track:same","uid":"gone"}),
+                &state
+            )
+            .is_err()
+        );
+    }
+
     use super::*;
+
+    #[test]
+    fn queue_view_hides_context_continuations_without_deduplicating_visible_rows() {
+        let state = json!({"context_uri":"spotify:episode:current","track":null,"next_tracks":[
+            {"uri":"spotify:episode:next","uid":"next","metadata":{"title":"Next episode"}},
+            {"uri":"spotify:delimiter","metadata":{"hidden":"true"}},
+            {"uri":"spotify:episode:current","uid":"repeat","metadata":{"hidden":"true","iteration":"1"}},
+            {"uri":"spotify:episode:current","uid":"repeat","metadata":{"hidden":true,"iteration":"2"}},
+            {"uri":"spotify:episode:manual","uid":"one","metadata":{"is_queued":"true"}},
+            {"uri":"spotify:episode:manual","uid":"two","metadata":{"is_queued":"true"}}
+        ],"prev_tracks":[]});
+        let view = queue_view(&state).unwrap();
+        assert_eq!(view["nextUp"].as_array().unwrap().len(), 1);
+        assert_eq!(view["nextUp"][0]["uri"], "spotify:episode:next");
+        assert_eq!(view["queued"].as_array().unwrap().len(), 2);
+        assert_eq!(view["queued"][0]["uid"], "one");
+        assert_eq!(view["queued"][1]["uid"], "two");
+        let (edited, _) = command("queue.replace", &json!({"uris":[]}), &state).unwrap();
+        assert_eq!(
+            edited["next_tracks"].as_array().unwrap().len(),
+            4,
+            "view filtering must not remove continuation state from writes"
+        );
+    }
+    fn edit_state() -> Value {
+        json!({"next_tracks":[
+            {"uri":"spotify:track:same","uid":"one","provider":"queue","metadata":{"is_queued":"true"}},
+            {"uri":"spotify:track:same","uid":"two","provider":"queue","metadata":{"is_queued":"true"}},
+            {"uri":"spotify:ad:ad","uid":"ad","provider":"ad"},
+            {"uri":"spotify:track:context","uid":"context"}
+        ],"prev_tracks":[{"uri":"spotify:track:previous"}]})
+    }
+
+    #[test]
+    fn connect_image_identifiers_become_fetchable_cover_urls() {
+        let id = "a".repeat(40);
+        let media = crate::mapping::item(&track(&json!({"uri":"spotify:track:t", "metadata":{"image_url":format!("spotify:image:{id}")}}))).unwrap();
+        assert_eq!(media.images[0].url, format!("https://i.scdn.co/image/{id}"));
+    }
+
+    #[test]
+    fn http_queue_edits_keep_context_ads_and_exact_duplicate_rows() {
+        let state = edit_state();
+        let (moved, _) = command("queue.reorder", &json!({"items":[{"uri":"spotify:track:same","uid":"two"}],"before":{"uri":"spotify:track:same","uid":"one"}}), &state).unwrap();
+        assert_eq!(moved["endpoint"], "set_queue");
+        assert_eq!(moved["next_tracks"][0]["uid"], "two");
+        assert_eq!(moved["next_tracks"][1]["uid"], "one");
+        assert_eq!(
+            &moved["next_tracks"].as_array().unwrap()[2..],
+            &state["next_tracks"].as_array().unwrap()[2..]
+        );
+        assert_eq!(moved["prev_tracks"], state["prev_tracks"]);
+        let (head, _) = command(
+            "queue.insert",
+            &json!({"uris":["spotify:track:new"]}),
+            &state,
+        )
+        .unwrap();
+        assert_eq!(head["next_tracks"][0]["uri"], "spotify:track:new");
+        let (inserted, _) = command("queue.insert", &json!({"uris":["spotify:track:new","spotify:track:new"],"before":{"uri":"spotify:track:same","uid":"two"}}), &state).unwrap();
+        assert_eq!(inserted["next_tracks"][0]["uid"], "one");
+        assert_eq!(inserted["next_tracks"][3]["uid"], "two");
+        assert_ne!(
+            inserted["next_tracks"][1]["uid"],
+            inserted["next_tracks"][2]["uid"]
+        );
+        let (replaced, _) = command(
+            "queue.replace",
+            &json!({"uris":["spotify:track:same","spotify:track:new","spotify:track:same"]}),
+            &state,
+        )
+        .unwrap();
+        assert_eq!(replaced["next_tracks"][0]["uid"], "one");
+        assert_eq!(replaced["next_tracks"][2]["uid"], "two");
+        assert_eq!(replaced["next_tracks"][3], state["next_tracks"][2]);
+        assert_eq!(replaced["next_tracks"][4], state["next_tracks"][3]);
+    }
+
+    #[test]
+    fn http_queue_insertion_targets_context_slots_without_losing_continuation() {
+        let mut state = edit_state();
+        state["next_tracks"].as_array_mut().unwrap().push(json!({
+            "uri":"spotify:track:context", "uid":"hidden", "metadata":{"hidden":"true"}
+        }));
+        let anchor = json!({"uri":"spotify:track:context", "uid":"context"});
+        let inserted = edit_queue(
+            "queue.insert",
+            &json!({
+                "uris":["spotify:track:new", "spotify:track:new"],
+                "before":anchor, "queued":false
+            }),
+            &state,
+        )
+        .unwrap();
+        assert_eq!(inserted["next_tracks"][3]["uri"], "spotify:track:new");
+        assert_eq!(inserted["next_tracks"][3]["provider"], "context");
+        assert!(!queued(&inserted["next_tracks"][3]));
+        assert_ne!(
+            inserted["next_tracks"][3]["uid"],
+            inserted["next_tracks"][4]["uid"]
+        );
+        assert_eq!(inserted["next_tracks"][5], state["next_tracks"][3]);
+        assert_eq!(inserted["next_tracks"][6], state["next_tracks"][4]);
+        assert_eq!(inserted["prev_tracks"], state["prev_tracks"]);
+        let appended = edit_queue(
+            "queue.insert",
+            &json!({
+                "uris":["spotify:track:new"], "after":anchor, "queued":false
+            }),
+            &state,
+        )
+        .unwrap();
+        assert_eq!(appended["next_tracks"][4]["uri"], "spotify:track:new");
+        assert_eq!(appended["next_tracks"][5]["uid"], "hidden");
+        assert!(
+            edit_queue(
+                "queue.insert",
+                &json!({
+                    "uris":["spotify:track:new"], "before":anchor, "after":anchor
+                }),
+                &state
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn http_queue_edits_refuse_stale_ambiguous_or_restricted_rows() {
+        let state = edit_state();
+        let wanted = json!({"uri":"spotify:track:same","uid":"missing"});
+        assert!(
+            command(
+                "queue.insert",
+                &json!({"uris":["spotify:track:new"],"before":wanted}),
+                &state
+            )
+            .is_err()
+        );
+        assert!(
+            command(
+                "queue.reorder",
+                &json!({"items":[state["next_tracks"][0]],"before":state["next_tracks"][0]}),
+                &state
+            )
+            .is_err()
+        );
+        let mut restricted = state.clone();
+        restricted["restrictions"] = json!({"disallow_setting_queue_reasons":["restricted"]});
+        assert!(command("queue.replace", &json!({"uris":[]}), &restricted).is_err());
+        assert!(command("queue.replace", &json!({"uris":["spotify:ad:ad"]}), &state).is_err());
+    }
+
     #[test]
     fn target_state_never_reuses_another_devices_restrictions_or_queue() {
         let cluster = json!({"active_device_id":"a", "player_state":{"restrictions":{"disallow_pausing_reasons":["ad"]}},
@@ -420,6 +848,44 @@ mod tests {
         let reported = snapshot(&json!({"active_device_id":"test","player_state":state}));
         assert_eq!(reported["durationMs"], 10000);
         assert_eq!(reported["speed"], 1.5);
+    }
+
+    #[test]
+    fn context_queue_edits_preserve_duplicate_occurrences_and_reject_ads() {
+        let state = json!({"next_tracks":[
+                {"uri":"spotify:track:same","uid":"one"},
+                {"uri":"spotify:track:same","uid":"two"},
+                {"uri":"spotify:ad:advert","uid":"ad","provider":"ad"}
+            ],"prev_tracks":[]});
+        let (moved, _) = command("queue.reorder", &json!({"items":[{"uri":"spotify:track:same","uid":"two"}],"before":{"uri":"spotify:track:same","uid":"one"}}), &state).unwrap();
+        assert_eq!(moved["next_tracks"][0]["uid"], "two");
+        let (removed, _) = command(
+            "queue.remove",
+            &json!({"items":[{"uri":"spotify:track:same","uid":"two"}]}),
+            &state,
+        )
+        .unwrap();
+        assert_eq!(removed["next_tracks"].as_array().unwrap().len(), 2);
+        assert_eq!(removed["next_tracks"][0]["uid"], "one");
+        let (promoted, _) = command("queue.reorder", &json!({"items":[{"uri":"spotify:track:same","uid":"two"}],"before":{"uri":"spotify:track:same","uid":"one"},"queued":true}), &state).unwrap();
+        assert_eq!(promoted["next_tracks"][0]["metadata"]["is_queued"], "true");
+        assert_eq!(promoted["next_tracks"][0]["provider"], "queue");
+        let (demoted, _) = command(
+            "queue.reorder",
+            &json!({"items":[{"uri":"spotify:track:same","uid":"two"}],"queued":false}),
+            &promoted,
+        )
+        .unwrap();
+        assert_eq!(demoted["next_tracks"][0]["metadata"]["is_queued"], "false");
+        assert_eq!(demoted["next_tracks"][0]["uid"], "two");
+        assert!(
+            command(
+                "queue.remove",
+                &json!({"items":[{"uri":"spotify:ad:advert","uid":"ad"}]}),
+                &state
+            )
+            .is_err()
+        );
     }
 
     #[test]

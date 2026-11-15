@@ -96,6 +96,24 @@
   };
 
   const lastReal = items => (items || []).filter(i => kind(i) !== 'ad');
+  let shuffleAvailability = {uri: null, modes: null};
+  let shuffleProbe = null;
+  const refreshShuffleModes = () => {
+    const uri = need().player.getState()?.context?.uri || null;
+    if (!uri || shuffleAvailability.uri === uri) return Promise.resolve(false);
+    if (shuffleProbe?.uri === uri) return shuffleProbe.promise;
+    const promise = Promise.resolve().then(() => need().resolve('ShuffleAPI').getAvailableShuffleModes(uri))
+      .then(modes => {
+        if (need().player.getState()?.context?.uri !== uri) return false;
+        shuffleAvailability = {uri, modes: Array.isArray(modes) ? modes : null};
+        return true;
+      }).catch(() => {
+        if (need().player.getState()?.context?.uri === uri) shuffleAvailability = {uri, modes: null};
+        return false;
+      }).finally(() => { if (shuffleProbe?.uri === uri) shuffleProbe = null; });
+    shuffleProbe = {uri, promise};
+    return promise;
+  };
   const mapState = s => {
     if (!s) return null;
     const now = Date.now();
@@ -118,6 +136,7 @@
       durationMs: s.duration,
       shuffle: !!s.shuffle,
       smartShuffle: !!s.smartShuffle,
+      availableShuffleModes: shuffleAvailability.uri === s.context?.uri ? shuffleAvailability.modes : null,
       repeat: s.repeat, // 0 off, 1 context, 2 track
       speed: s.speed,
       restrictions: s.restrictions || {},
@@ -192,7 +211,7 @@
       if (!sdk || !sdk.harmony || typeof sdk.harmony.setName !== 'function') throw new Error('device naming unavailable');
       return sdk.harmony.setName(String(a.name));
     },
-    'player.state': () => mapState(need().player.getState()),
+    'player.state': () => { publishShuffleModes(); return mapState(need().player.getState()); },
     'player.queue': () => mapQueue(need().player.getQueue()),
     // {contextUri, trackUri?, trackUid?, index?, positionMs?}
     'player.play': a => {
@@ -392,7 +411,15 @@
     if (!fn) throw new Error('unknown bridge method ' + method);
     return toJson(await fn(args || {}));
   };
-  const pushState = () => post({type: 'state', state: mapState(services.player.getState())});
+  const publishShuffleModes = () => {
+    void refreshShuffleModes().then(changed => {
+      if (changed) post({type: 'state', state: mapState(services.player.getState())});
+    });
+  };
+  const pushState = () => {
+    post({type: 'state', state: mapState(services.player.getState())});
+    publishShuffleModes();
+  };
   const pushQueue = () => post({type: 'queue', queue: mapQueue(services.player.getQueue())});
   const announce = () => { if (services) { post({type: 'ready', version: VERSION}); if (!serviceOnly) { pushState(); pushQueue(); } } };
   window.Myspoti = {version: VERSION, serviceOnly, call, announce, methods: Object.keys(commands)};

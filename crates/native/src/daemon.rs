@@ -12,6 +12,8 @@ pub enum DaemonError {
     ExitedEarly,
     #[error("Timed out waiting for Soloist WebSocket server on {0}")]
     Timeout(String),
+    #[error("Timed out waiting for the Spotify app to pair '{0}'")]
+    PairTimeout(String),
 }
 
 /// Device name shown in the Spotify Connect picker when the caller sets none.
@@ -98,26 +100,7 @@ impl SoloistProcess {
         );
 
         let mut child = cmd.spawn()?;
-
-        // Undrained output pipes eventually block the daemon.
-        if let Some(stdout) = child.stdout.take() {
-            tokio::spawn(async move {
-                use tokio::io::AsyncBufReadExt;
-                let mut lines = tokio::io::BufReader::new(stdout).lines();
-                while let Ok(Some(line)) = lines.next_line().await {
-                    log::debug!("soloist: {line}");
-                }
-            });
-        }
-        if let Some(stderr) = child.stderr.take() {
-            tokio::spawn(async move {
-                use tokio::io::AsyncBufReadExt;
-                let mut lines = tokio::io::BufReader::new(stderr).lines();
-                while let Ok(Some(line)) = lines.next_line().await {
-                    log::warn!("soloist: {line}");
-                }
-            });
-        }
+        drain(&mut child);
 
         let mut connected = false;
         for _ in 0..50 {
@@ -143,6 +126,50 @@ impl SoloistProcess {
         Ok(Self { child, ws_url })
     }
 
+    /// Runs the daemon in Soloist's pairing mode until the official Spotify app
+    /// provisions it, which stores the session for later launches.
+    pub async fn pair(config: &SoloistConfig, timeout: Duration) -> Result<(), DaemonError> {
+        if let (Some(data_dir), Some(cache_dir)) = (&config.data_dir, &config.cache_dir) {
+            import_legacy_state(data_dir, cache_dir);
+        }
+
+        let mut cmd = Command::new(&config.binary_path);
+        cmd.kill_on_drop(true);
+        cmd.arg(format!("--device-name={}", config.device_name))
+            .arg(format!("--api-key={}", config.api_key))
+            .arg("--pair")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        if let Some(ref data_dir) = config.data_dir {
+            private_dir(data_dir)?;
+            cmd.arg("--data-dir").arg(data_dir);
+        }
+        if let Some(ref cache_dir) = config.cache_dir {
+            private_dir(cache_dir)?;
+            cmd.arg("--cache-dir").arg(cache_dir);
+        }
+
+        log::info!(
+            "Waiting for the Spotify app to pair '{}' (pick the device in Spotify)",
+            config.device_name
+        );
+        let mut child = cmd.spawn()?;
+        drain(&mut child);
+
+        match tokio::time::timeout(timeout, child.wait()).await {
+            Ok(Ok(status)) if status.success() => Ok(()),
+            Ok(Ok(status)) => {
+                log::error!("Soloist pairing exited with: {}", status);
+                Err(DaemonError::ExitedEarly)
+            }
+            Ok(Err(error)) => Err(DaemonError::Io(error)),
+            Err(_) => {
+                let _ = child.kill().await;
+                Err(DaemonError::PairTimeout(config.device_name.clone()))
+            }
+        }
+    }
+
     pub async fn kill(&mut self) -> std::io::Result<()> {
         if self.child.try_wait()?.is_none() {
             self.child.kill().await?;
@@ -154,6 +181,28 @@ impl SoloistProcess {
 impl Drop for SoloistProcess {
     fn drop(&mut self) {
         let _ = self.child.start_kill();
+    }
+}
+
+/// Undrained output pipes eventually block the daemon.
+fn drain(child: &mut Child) {
+    if let Some(stdout) = child.stdout.take() {
+        tokio::spawn(async move {
+            use tokio::io::AsyncBufReadExt;
+            let mut lines = tokio::io::BufReader::new(stdout).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                log::debug!("soloist: {line}");
+            }
+        });
+    }
+    if let Some(stderr) = child.stderr.take() {
+        tokio::spawn(async move {
+            use tokio::io::AsyncBufReadExt;
+            let mut lines = tokio::io::BufReader::new(stderr).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                log::warn!("soloist: {line}");
+            }
+        });
     }
 }
 
@@ -220,6 +269,51 @@ fn copy_missing(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Paired daemons exit on their own; an unpaired one is stopped by the deadline.
+    #[cfg(unix)]
+    #[test]
+    fn pairing_follows_the_daemon_exit_and_its_deadline() {
+        use std::os::unix::fs::PermissionsExt;
+        let base = std::env::temp_dir().join(format!("spotcore_pair_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        let script = |name: &str, body: &str| {
+            let path = base.join(name);
+            std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+            path
+        };
+        let config = |binary: PathBuf| SoloistConfig {
+            binary_path: binary,
+            api_key: "key".into(),
+            device_name: "Probe".into(),
+            ws_port: 0,
+            data_dir: Some(base.join("data")),
+            cache_dir: Some(base.join("cache")),
+        };
+
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let paired = script("paired.sh", "exit 0");
+            assert!(
+                SoloistProcess::pair(&config(paired), Duration::from_secs(10))
+                    .await
+                    .is_ok()
+            );
+
+            let idle = script("idle.sh", "sleep 30");
+            let error = SoloistProcess::pair(&config(idle), Duration::from_millis(200))
+                .await
+                .unwrap_err();
+            assert!(matches!(error, DaemonError::PairTimeout(name) if name == "Probe"));
+        });
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
 
     #[test]
     fn imports_login_state_without_overwriting() {

@@ -4,6 +4,81 @@ use serde_json::json;
 use spotcore_auth::AccountTier;
 use spotcore_core::{AudioQuality, Paging};
 
+fn sparse_media(item: &spotcore_core::MediaItem) -> bool {
+    item.name.is_empty()
+        || item.images.is_empty()
+        || (matches!(
+            item.kind,
+            spotcore_core::MediaKind::Track | spotcore_core::MediaKind::Episode
+        ) && item.duration_ms.is_none_or(|duration| duration == 0))
+}
+
+fn fill_media_metadata(item: &mut spotcore_core::MediaItem, full: spotcore_core::MediaItem) {
+    if item.name.is_empty() {
+        item.name = full.name;
+    }
+    if item.duration_ms.is_none_or(|duration| duration == 0) {
+        item.duration_ms = full.duration_ms;
+    }
+    if item.images.is_empty() {
+        item.images = full.images;
+    }
+    if let (Some(row), Some(metadata)) = (item.raw.as_object_mut(), full.raw.as_object()) {
+        for (key, value) in metadata {
+            if key != "uri" && key != "uid" {
+                row.insert(key.clone(), value.clone());
+            }
+        }
+    }
+}
+
+pub(crate) async fn hydrate_media(api: &Api, items: Vec<&mut spotcore_core::MediaItem>) {
+    use futures_util::{StreamExt, stream};
+    let mut missing = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for item in &items {
+        if sparse_media(item)
+            && api.should_lookup_media(&item.uri)
+            && (item.uri.starts_with("spotify:track:")
+                || item.uri.starts_with("spotify:episode:")
+                || item.uri.starts_with("spotify:playlist:")
+                || item.uri.starts_with("spotify:album:"))
+            && seen.insert(item.uri.clone())
+        {
+            missing.push(item.uri.clone());
+        }
+    }
+    // Bound work per refresh; later refreshes fill the rest from the session cache.
+    let mut reads = stream::iter(missing.into_iter().take(24).map(|uri| async move {
+        let result = tokio::time::timeout(std::time::Duration::from_secs(3), async {
+            if uri.starts_with("spotify:episode:") {
+                api.podcasts().episode(&uri).await
+            } else if uri.starts_with("spotify:playlist:") {
+                api.playlists().playlist(&uri).await
+            } else if uri.starts_with("spotify:album:") {
+                api.catalog().album(&uri).await
+            } else {
+                api.catalog().track(&uri).await
+            }
+        })
+        .await;
+        api.cache_media(uri, result.ok().and_then(Result::ok));
+    }))
+    .buffer_unordered(6);
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(3), async {
+        while reads.next().await.is_some() {}
+    })
+    .await;
+    drop(reads);
+    for item in items {
+        if sparse_media(item)
+            && let Some(full) = api.cached_media(&item.uri)
+        {
+            fill_media_metadata(item, full);
+        }
+    }
+}
+
 pub struct Users<'a>(pub(crate) &'a Api);
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Account {
@@ -166,6 +241,14 @@ impl Users<'_> {
 
 pub struct Extras<'a>(pub(crate) &'a Api);
 impl Extras<'_> {
+    /// Resolves Spotify's countdown page; its URI is not an album URI.
+    pub async fn prerelease(&self, value: &str) -> Result<Value, Error> {
+        uri(value)?;
+        if !value.starts_with("spotify:prerelease:") {
+            return Err(Error::InvalidInput("expected prerelease URI"));
+        }
+        self.0.gql("albumPreRelease", json!({"uri":value})).await
+    }
     pub async fn lyrics(&self, value: &str) -> Result<Value, Error> {
         uri(value)?;
         self.0.request("GET",&format!("https://spclient.wg.spotify.com/color-lyrics/v2/track/{}?format=json&vocalRemoval=false&market=from_token",segment(value.rsplit(':').next().unwrap_or_default())),None).await
@@ -307,12 +390,145 @@ fn descriptor(device: &Device) -> Value {
     json!({"device_id": device.id, "device_name": device.name})
 }
 
+fn quality_request(device: &Device) -> Value {
+    json!({"devices": [{"device_descriptor": descriptor(device)}]})
+}
+
 fn reported_quality(response: &Value) -> Option<AudioQuality> {
     AudioQuality::from_level_name(response["device_settings"][0]["audio_quality"].as_str()?)
 }
 
 pub struct Devices<'a>(pub(crate) &'a Api);
 impl Devices<'_> {
+    /// The account's active Connect receiver, independent of the local audio engine.
+    pub async fn playback_state(&self) -> Result<Option<spotcore_core::PlayerSnapshot>, Error> {
+        let cluster = crate::direct::cluster(self.0).await?;
+        let mut state = crate::mapping::snapshot(&crate::connect::snapshot(&cluster))?;
+        if let Some(state) = &mut state {
+            state.capabilities = crate::connect::capabilities(&cluster);
+        }
+        Ok(state)
+    }
+    /// Plays an ordered context without adding its remaining items to the manual queue.
+    pub async fn play_items(
+        &self,
+        target: Option<&str>,
+        context: Option<&str>,
+        uris: &[String],
+        position: std::time::Duration,
+    ) -> Result<(), Error> {
+        if uris.is_empty() || uris.len() > 1000 {
+            return Err(Error::InvalidInput(
+                "playback list must contain 1 to 1000 items",
+            ));
+        }
+        for item in uris {
+            uri(item)?;
+        }
+        let context = context.unwrap_or(&uris[0]);
+        uri(context)?;
+        let position = u64::try_from(position.as_millis())
+            .map_err(|_| Error::InvalidInput("invalid play position"))?;
+        if position > 9_007_199_254_740_991 {
+            return Err(Error::InvalidInput("invalid play position"));
+        }
+        crate::connect::call_to(
+            self.0,
+            target,
+            "player.play",
+            json!({
+                "contextUri":context, "order":uris, "index":0, "positionMs":position
+            }),
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// Fast queue state without network metadata enrichment; context and row identities share one cluster read.
+    pub async fn queue_snapshot(&self) -> Result<spotcore_core::Queue, Error> {
+        let mut queue =
+            crate::mapping::queue(&crate::connect::call(self.0, "player.queue", json!({})).await?)?;
+        for item in queue
+            .current
+            .iter_mut()
+            .chain(&mut queue.queued)
+            .chain(&mut queue.next_up)
+        {
+            if sparse_media(item)
+                && let Some(full) = self.0.cached_media(&item.uri)
+            {
+                fill_media_metadata(item, full);
+            }
+        }
+        Ok(queue)
+    }
+
+    /// The account's current queue over HTTP, without a browser player.
+    pub async fn queue(&self) -> Result<spotcore_core::Queue, Error> {
+        let mut queue = self.queue_snapshot().await?;
+        hydrate_media(
+            self.0,
+            queue
+                .current
+                .iter_mut()
+                .chain(&mut queue.queued)
+                .chain(&mut queue.next_up)
+                .collect(),
+        )
+        .await;
+        Ok(queue)
+    }
+    /// Replaces manual queue entries in one HTTP command, retaining context and reusable row identities.
+    /// Edits one exact visible occurrence on the named active Connect receiver.
+    /// No anchors or membership means removal; membership alone changes section in place.
+    pub async fn edit_queue_occurrence(
+        &self,
+        device: &str,
+        item: spotcore_core::QueueItem,
+        before: Option<spotcore_core::QueueItem>,
+        after: Option<spotcore_core::QueueItem>,
+        manual: Option<bool>,
+    ) -> Result<(), Error> {
+        let method = if before.is_none() && after.is_none() && manual.is_none() {
+            "queue.remove"
+        } else {
+            "queue.reorder"
+        };
+        crate::connect::call_to(
+            self.0,
+            Some(device),
+            method,
+            json!({"items":[item],"before":before,"after":after,"queued":manual}),
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// Inserts tracks at an exact visible slot on the named active receiver.
+    /// Without an anchor, inserts at the manual-queue head.
+    pub async fn insert_queue_items(
+        &self,
+        device: &str,
+        uris: &[String],
+        before: Option<spotcore_core::QueueItem>,
+        after: Option<spotcore_core::QueueItem>,
+        manual: bool,
+    ) -> Result<(), Error> {
+        crate::connect::call_to(
+            self.0,
+            Some(device),
+            "queue.insert",
+            json!({"uris":uris,"before":before,"after":after,"queued":manual}),
+        )
+        .await?;
+        Ok(())
+    }
+
+    pub async fn replace_queued(&self, device: &str, uris: &[String]) -> Result<(), Error> {
+        crate::connect::call_to(self.0, Some(device), "queue.replace", json!({"uris":uris}))
+            .await?;
+        Ok(())
+    }
     pub async fn list(&self) -> Result<Vec<Device>, Error> {
         if self.0.browser().is_err() {
             let cluster = crate::direct::cluster(self.0).await?;
@@ -340,7 +556,7 @@ impl Devices<'_> {
             .request(
                 "POST",
                 &format!("{PLAYBACK_SETTINGS}/GetDeviceSettings"),
-                Some(json!({"devices": [descriptor(device)]})),
+                Some(quality_request(device)),
             )
             .await?;
         reported_quality(&response)
@@ -570,6 +786,24 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn queue_metadata_hydration_preserves_duplicate_identity() {
+        let mut sparse =
+            crate::mapping::item(&json!({"uri":"spotify:track:original", "uid":"second-copy"}))
+                .unwrap();
+        let full = crate::mapping::item(&json!({"uri":"spotify:track:relinked", "name":"Song", "durationMs":123000,
+            "artists":[{"name":"Artist"}], "album":{"name":"Album","images":[{"url":"https://example.com/cover"}]}})).unwrap();
+        fill_media_metadata(&mut sparse, full);
+        assert_eq!(sparse.uri, "spotify:track:original");
+        assert_eq!(sparse.uid.as_deref(), Some("second-copy"));
+        assert_eq!(sparse.raw["uri"], "spotify:track:original");
+        assert_eq!(sparse.raw["uid"], "second-copy");
+        assert_eq!(sparse.duration_ms, Some(123000));
+        assert_eq!(sparse.images[0].url, "https://example.com/cover");
+        assert_eq!(sparse.raw["artists"][0]["name"], "Artist");
+        assert!(!sparse_media(&sparse));
+    }
+
+    #[test]
     fn device_quality_flags_come_from_connect() {
         let device = Device::parse(&json!({
             "id": "abc",
@@ -609,6 +843,18 @@ mod tests {
         assert_eq!(device.kind, "unknown");
         assert!(!device.lossless_supported);
         assert!(Device::from_cluster("abc", &json!({}), false).is_err());
+    }
+
+    #[test]
+    fn playback_settings_request_wraps_the_device_descriptor() {
+        let device =
+            Device::from_cluster("receiver-id", &json!({"name": "SpotDesk"}), false).unwrap();
+        assert_eq!(
+            quality_request(&device),
+            json!({"devices": [{"device_descriptor": {
+                "device_id": "receiver-id", "device_name": "SpotDesk"
+            }}]})
+        );
     }
 
     #[test]

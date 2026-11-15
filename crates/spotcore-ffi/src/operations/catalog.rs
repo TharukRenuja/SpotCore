@@ -28,6 +28,16 @@ pub(super) async fn call(
             let p: Args = parse(arguments)?;
             encode(sdk.catalog().album_info(&p.value).await?)
         }
+        "album_page" => {
+            #[derive(serde::Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Args {
+                value: String,
+                paging: Paging,
+            }
+            let p: Args = parse(arguments)?;
+            encode(sdk.catalog().album_page(&p.value, p.paging).await?)
+        }
         "album_tracks" => {
             #[derive(serde::Deserialize)]
             #[serde(deny_unknown_fields)]

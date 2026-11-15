@@ -7,6 +7,23 @@ use std::process::Stdio;
 use std::time::Duration;
 use tokio::process::{Child, Command};
 
+pub use spotcore_engine::run_embedded as run_embedded_launcher;
+
+static EMBEDDED_LAUNCHER: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+/// Opt into supervising browser helpers through this executable.
+/// Call `run_embedded_launcher` before the application's CLI and UI initialization.
+/// An explicit `SPOTCORE_LAUNCHER` continues to override this choice.
+pub fn enable_embedded_launcher() -> Result<(), Error> {
+    if EMBEDDED_LAUNCHER.get().is_none() {
+        let executable = std::env::current_exe().map_err(|error| {
+            Error::Backend(format!("cannot locate application launcher: {error}"))
+        })?;
+        let _ = EMBEDDED_LAUNCHER.set(executable);
+    }
+    Ok(())
+}
+
 /// Auto prefers the system-Qt host, then the OS adapter and installed Chromium browsers.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum BrowserEngine {
@@ -218,8 +235,14 @@ fn find_launcher_in(root: &Path) -> Option<PathBuf> {
 }
 
 fn engine_command(bin_path: &Path, root: &Path) -> Result<Command, Error> {
-    let launcher = find_launcher_in(root).ok_or_else(|| Error::Backend(
-            "spotcore-engine launcher was not found; install it beside the application or set SPOTCORE_LAUNCHER".into()))?;
+    let embedded = if std::env::var_os("SPOTCORE_LAUNCHER").is_none() {
+        EMBEDDED_LAUNCHER.get()
+    } else {
+        None
+    };
+    let launcher = embedded.cloned().or_else(|| find_launcher_in(root)).ok_or_else(|| {
+        Error::Backend("spotcore-engine launcher was not found; install it beside the application or set SPOTCORE_LAUNCHER".into())
+    })?;
     if std::fs::canonicalize(&launcher)
         .ok()
         .zip(std::fs::canonicalize(bin_path).ok())
@@ -230,6 +253,9 @@ fn engine_command(bin_path: &Path, root: &Path) -> Result<Command, Error> {
         ));
     }
     let mut cmd = Command::new(launcher);
+    if embedded.is_some() {
+        cmd.arg(spotcore_engine::EMBEDDED_ARGUMENT);
+    }
     cmd.arg("--parent-pid")
         .arg(std::process::id().to_string())
         .arg("--backend")
@@ -697,6 +723,7 @@ fn kill_process_group(group: Option<u32>) {
 /// Builder and launcher for the SpotCore host process.
 #[derive(Clone)]
 pub struct HostLauncher {
+    application_name: String,
     host_path: Option<PathBuf>,
     data_root: Option<PathBuf>,
     profile_dir: Option<PathBuf>,
@@ -731,6 +758,7 @@ impl std::fmt::Debug for HostLauncher {
 impl Default for HostLauncher {
     fn default() -> Self {
         Self {
+            application_name: "SpotCore".into(),
             host_path: None,
             data_root: None,
             profile_dir: None,
@@ -750,6 +778,11 @@ impl Default for HostLauncher {
 impl HostLauncher {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn application_name(mut self, name: impl Into<String>) -> Self {
+        self.application_name = name.into();
+        self
     }
 
     pub fn engine(mut self, engine: BrowserEngine) -> Self {
@@ -826,7 +859,7 @@ impl HostLauncher {
             .profile_dir
             .clone()
             .unwrap_or(self.root()?.join("profile"));
-        login_interactive(Some(&host), Some(&profile)).await
+        login_interactive_named(Some(&host), Some(&profile), &self.application_name).await
     }
 
     /// WKWebView stores account data outside the profile directory; remove its named store first.
@@ -982,10 +1015,15 @@ impl HostLauncher {
         role: crate::BrowserRole,
     ) -> Error {
         let mut requirements = vec![
-            "Install a supported Chromium browser, or spotcore-engine plus the system Qt6 WebEngine runtime and resources".into(),
-            "Install the spotcore-engine launcher; SPOTCORE_LAUNCHER can specify its path".into(),
+            "Install a supported Chromium browser, or spotcore-qt-engine plus the system Qt6 WebEngine runtime and resources".into(),
             "Explicit backend and runtime paths can be supplied by the application".into(),
         ];
+        if EMBEDDED_LAUNCHER.get().is_none() || std::env::var_os("SPOTCORE_LAUNCHER").is_some() {
+            requirements.push(
+                "Install the spotcore-engine launcher; SPOTCORE_LAUNCHER can specify its path"
+                    .into(),
+            );
+        }
         if role == crate::BrowserRole::Playback {
             requirements.push("Playback requires working Widevine EME and AAC decoding; OS adapters currently support services only".into());
         }
@@ -1126,6 +1164,7 @@ impl HostLauncher {
             ));
         }
         let mut cmd = engine_command(bin_path, &root)?;
+        cmd.env("SPOTCORE_APP_NAME", &self.application_name);
 
         if is_custom_engine {
             if self.helpers && self.engine != BrowserEngine::System {
@@ -1299,6 +1338,14 @@ pub async fn login_interactive(
     host_path: Option<&Path>,
     profile_dir: Option<&Path>,
 ) -> Result<(), Error> {
+    login_interactive_named(host_path, profile_dir, "SpotCore").await
+}
+
+async fn login_interactive_named(
+    host_path: Option<&Path>,
+    profile_dir: Option<&Path>,
+    application_name: &str,
+) -> Result<(), Error> {
     let host_bin = host_path
         .map(PathBuf::from)
         .or_else(find_host)
@@ -1317,6 +1364,7 @@ pub async fn login_interactive(
         .is_some_and(|n| n.contains("spotcore"));
 
     let mut cmd = engine_command(&host_bin, spotcore_core::Paths::discover()?.root())?;
+    cmd.env("SPOTCORE_APP_NAME", application_name);
     if is_engine {
         cmd.arg("--login");
         cmd.arg("--profile-dir").arg(&profile);
@@ -1354,6 +1402,71 @@ pub async fn login_interactive(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn embedded_launcher_routing_honours_explicit_overrides() {
+        const MODE: &str = "SPOTCORE_EMBEDDED_LAUNCHER_TEST";
+        if let Ok(mode) = std::env::var(MODE) {
+            enable_embedded_launcher().unwrap();
+            enable_embedded_launcher().unwrap();
+            let root = scratch("embedded-routing");
+            let backend = root.join("backend");
+            std::fs::write(&backend, b"fixture").unwrap();
+            let command = engine_command(&backend, &root).unwrap();
+            let command = command.as_std();
+            assert_eq!(command.get_program(), std::env::current_exe().unwrap());
+            assert_eq!(
+                command.get_args().next().unwrap(),
+                if mode == "embedded" {
+                    spotcore_engine::EMBEDDED_ARGUMENT
+                } else {
+                    "--parent-pid"
+                }
+            );
+            std::fs::remove_dir_all(root).unwrap();
+            return;
+        }
+        // Isolate the process-wide opt-in from other discovery tests.
+        let executable = std::env::current_exe().unwrap();
+        for mode in ["embedded", "external"] {
+            let mut child = std::process::Command::new(&executable);
+            child
+                .args([
+                    "--exact",
+                    "host::tests::embedded_launcher_routing_honours_explicit_overrides",
+                ])
+                .env(MODE, mode)
+                .env_remove("SPOTCORE_LAUNCHER");
+            if mode == "external" {
+                child.env("SPOTCORE_LAUNCHER", &executable);
+            }
+            let output = child.output().unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stdout)
+            );
+        }
+    }
+
+    #[test]
+    fn host_receives_application_branding() {
+        let root = scratch("application-name");
+        let command = HostLauncher::new()
+            .data_dir(&root)
+            .application_name("Spotifast")
+            .browser_role(crate::BrowserRole::Services)
+            .command(Path::new("spotcore-engine"), true, 1234)
+            .unwrap();
+        assert!(
+            command
+                .as_std()
+                .get_envs()
+                .any(|(key, value)| key == "SPOTCORE_APP_NAME"
+                    && value == Some(std::ffi::OsStr::new("Spotifast")))
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn services_mode_does_not_require_or_forward_widevine() {
         let root = scratch("service-role");

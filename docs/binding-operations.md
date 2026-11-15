@@ -25,6 +25,7 @@ A listed operation means it is exposed, not that every account supports it. `jam
 | --- | --- | --- |
 | `catalog.album` | `value: String` | `MediaItem` |
 | `catalog.album_info` | `value: String` | `AlbumInfo` |
+| `catalog.album_page` | `value: String, paging: Paging` | `Value` |
 | `catalog.album_tracks` | `value: String, paging: Paging` | `Page<MediaItem>` |
 | `catalog.appears_on` | `value: String` | `Value` |
 | `catalog.artist` | `value: String` | `MediaItem` |
@@ -44,8 +45,15 @@ A listed operation means it is exposed, not that every account supports it. `jam
 | Operation | Arguments | Result |
 | --- | --- | --- |
 | `devices.audio_quality` | `device: Device` | `AudioQuality` |
+| `devices.edit_queue_occurrence` | `device: String, item: QueueItem, before: Option<QueueItem>, after: Option<QueueItem>, manual: Option<bool>` | `()` |
+| `devices.insert_queue_items` | `device: String, uris: Vec<String>, before: Option<QueueItem>, after: Option<QueueItem>, manual: bool` | `()` |
 | `devices.list` | `{}` | `Vec<Device>` |
+| `devices.play_items` | `target: Option<String>, context: Option<String>, uris: Vec<String>, position: std::time::Duration` | `()` |
+| `devices.playback_state` | `{}` | `Option<spotcore_core::PlayerSnapshot>` |
 | `devices.pull_here` | `{}` | `Value` |
+| `devices.queue` | `{}` | `spotcore_core::Queue` |
+| `devices.queue_snapshot` | `{}` | `spotcore_core::Queue` |
+| `devices.replace_queued` | `device: String, uris: Vec<String>` | `()` |
 | `devices.set_audio_quality` | `device: Device, quality: AudioQuality` | `AudioQuality` |
 | `devices.transfer` | `device_id: String, play: bool` | `Value` |
 
@@ -58,7 +66,9 @@ A listed operation means it is exposed, not that every account supports it. `jam
 | `extras.is_artist_banned` | `values: Vec<String>` | `Value` |
 | `extras.is_excluded_from_taste` | `values: Vec<String>` | `Value` |
 | `extras.lyrics` | `value: String` | `Value` |
+| `extras.prerelease` | `value: String` | `Value` |
 | `extras.radio` | `value: String` | `Value` |
+| `extras.radio_tracks` | `seed: String, limit: u32` | `Vec<MediaItem>` |
 | `extras.radio_uri` | `seed: String` | `Option<String>` |
 | `extras.set_artist_banned` | `value: String, enabled: bool` | `Value` |
 | `extras.set_excluded_from_taste` | `value: String, enabled: bool` | `Value` |
@@ -120,6 +130,7 @@ A listed operation means it is exposed, not that every account supports it. `jam
 
 | Operation | Arguments | Result |
 | --- | --- | --- |
+| `playback.activate_local` | `{}` | `()` |
 | `playback.add_to_queue` | `uris: Vec<String>` | `()` |
 | `playback.audio_info` | `{}` | `AudioInfo` |
 | `playback.capabilities` | `{}` | `Capabilities` |
@@ -131,10 +142,12 @@ A listed operation means it is exposed, not that every account supports it. `jam
 | `playback.forward` | `amount: u64` | `()` |
 | `playback.insert_into_queue` | `uris: Vec<String>, before: Option<QueueItem>` | `()` |
 | `playback.is_playing` | `{}` | `bool` |
+| `playback.local_device` | `{}` | `Option<crate::web::Device>` |
 | `playback.next` | `{}` | `()` |
 | `playback.pause` | `{}` | `()` |
 | `playback.play` | `uri: String` | `()` |
 | `playback.play_context` | `uri: String, track: Option<String>, index: Option<u32>, position: Option<u64>` | `()` |
+| `playback.play_items` | `context: Option<String>, uris: Vec<String>, position: u64` | `()` |
 | `playback.play_on` | `device: String, uri: String` | `()` |
 | `playback.position_ms` | `{}` | `u64` |
 | `playback.previous` | `{}` | `()` |
@@ -170,6 +183,7 @@ A listed operation means it is exposed, not that every account supports it. `jam
 | `playlists.follow` | `value: String` | `Value` |
 | `playlists.follow_artist` | `value: String` | `Value` |
 | `playlists.follow_show` | `value: String` | `Value` |
+| `playlists.insert_tracks` | `value: String, tracks: Vec<String>, before_uid: String` | `()` |
 | `playlists.join` | `value: String, invitation_token: String` | `Value` |
 | `playlists.members` | `value: String` | `Value` |
 | `playlists.mine` | `{}` | `Vec<LibraryEntry>` |
@@ -181,6 +195,7 @@ A listed operation means it is exposed, not that every account supports it. `jam
 | `playlists.remove_member` | `value: String, username: String` | `Value` |
 | `playlists.remove_tracks` | `value: String, uids: Vec<String>` | `Value` |
 | `playlists.rename` | `value: String, name: String` | `Value` |
+| `playlists.rows` | `value: String, paging: Paging` | `Page<PlaylistRow>` |
 | `playlists.set_access` | `value: String, access: PlaylistAccess` | `Value` |
 | `playlists.set_cover` | `value: String, jpeg: Option<Vec<u8>>` | `Value` |
 | `playlists.set_description` | `value: String, description: String` | `Value` |

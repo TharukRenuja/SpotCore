@@ -9,7 +9,7 @@ const media = {aac: true, drm: true};
 const services = {
   ShuffleAPI: {
     getAvailableShuffleModes: async uri => uri === 'spotify:playlist:test' ? [0, 1, 2] : [0, 1],
-    setShuffle: async (uri, mode) => { calls.push({uri, mode}); },
+    setShuffle: async (uri, mode) => { calls.push({uri, mode}); state.shuffle = mode !== 0; state.smartShuffle = mode === 2; },
   },
   PlayerAPI: {
     getState: () => state,
@@ -60,16 +60,46 @@ vm.runInContext(source, context);
   assert.equal(await bridge.call(null, 'player.setDeviceName', {name:'SpotCore'}), true);
   assert.equal(calls.at(-1), 'name:SpotCore');
   state.context = {uri:'spotify:playlist:test'};
+  await bridge.call(null, 'player.state', {});
+  await new Promise(setImmediate);
+  let shuffleState = await bridge.call(null, 'player.state', {});
+  assert.deepEqual(Array.from(shuffleState.availableShuffleModes), [0, 1, 2]);
+  assert.equal(shuffleState.smartShuffle, false);
   await bridge.call(null, 'player.setShuffleMode', {mode:2});
   assert.deepEqual(calls.at(-1), {uri:'spotify:playlist:test', mode:2});
+  assert.equal((await bridge.call(null, 'player.state', {})).smartShuffle, true);
   await bridge.call(null, 'player.setShuffleMode', {mode:1});
   assert.equal(calls.at(-1).mode, 1);
   await bridge.call(null, 'player.setShuffleMode', {mode:0});
   assert.equal(calls.at(-1).mode, 0);
   state.context = {uri:'spotify:playlist:restricted'};
+  await bridge.call(null, 'player.state', {});
+  await new Promise(setImmediate);
+  shuffleState = await bridge.call(null, 'player.state', {});
+  assert.deepEqual(Array.from(shuffleState.availableShuffleModes), [0, 1]);
+  assert.equal(shuffleState.smartShuffle, false);
   const shuffleCallCount = calls.length;
   await assert.rejects(bridge.call(null, 'player.setShuffleMode', {mode:2}), /unavailable/);
   assert.equal(calls.length, shuffleCallCount);
+  const getModes = services.ShuffleAPI.getAvailableShuffleModes;
+  let finishModes;
+  services.ShuffleAPI.getAvailableShuffleModes = () => new Promise(resolve => { finishModes = resolve; });
+  state.context = {uri:'spotify:playlist:slow'};
+  const immediateState = await Promise.race([
+    bridge.call(null, 'player.state', {}),
+    new Promise(resolve => setImmediate(() => resolve('blocked-on-shuffle'))),
+  ]);
+  assert.notEqual(immediateState, 'blocked-on-shuffle', 'state must not wait for shuffle discovery');
+  assert.equal(immediateState.contextUri, 'spotify:playlist:slow');
+  assert.equal(immediateState.availableShuffleModes, null);
+  assert.equal(typeof finishModes, 'function');
+  state.context = {uri:'spotify:playlist:test'};
+  finishModes([0, 1]);
+  await new Promise(setImmediate);
+  services.ShuffleAPI.getAvailableShuffleModes = getModes;
+  await bridge.call(null, 'player.state', {});
+  await new Promise(setImmediate);
+  assert.deepEqual(Array.from((await bridge.call(null, 'player.state', {})).availableShuffleModes), [0, 1, 2]);
   state.context = null;
   await assert.rejects(bridge.call(null, 'player.setShuffleMode', {mode:2}), /context/);
   let drm = await bridge.call(null, 'player.drmSupport', {});

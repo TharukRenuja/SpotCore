@@ -88,3 +88,20 @@ Use Spotify URIs (`spotify:track:…`, `spotify:artist:…`) for domain entities
 Playback APIs accept `Duration`; snapshot/media fields ending in `_ms` are milliseconds. Browser media diagnostics can use seconds: do not mix those units. Volume controls accept finite normalized values 0.0–1.0. Do not replace missing UIDs with empty strings or select a different row by URI alone.
 
 `raw` can contain user-specific data. Do not dump entire models or service responses to public logs. Handle URLs and HTML-like descriptions as untrusted content in your UI.
+
+Collection items retain row-level `addedAt`, `added_at`, `addedBy`, `added_by` and `uid` fields in `MediaItem.raw` alongside the entity payload when Spotify supplies them. Clients can use these fields for added-date and contributor columns without a second request. Missing fields remain unknown.
+
+`EpisodeInfo::try_from(MediaItem)` normalizes episode metadata already present
+in collection rows, including episodeDuration and parent show variants, while
+retaining the base item's duration and artwork as fallbacks. Playlist row reads
+fill sparse episode details with four concurrent lookups and an eight-second
+per-page budget; failed lookups leave the original rows intact.
+
+`extras().radio_tracks(seed, limit)` accepts Spotify radio results that resolve
+to either playlist/playlist_v2 URIs or station contexts. Playlists use playlist
+reads; stations use the context resolver and normalize inline tracks, including
+binary Spotify IDs, before bounded metadata enrichment. A station URI is never
+passed to playlist GraphQL queries. Radio blending uses the same resolver.
+
+Station rows missing artist credits also request catalog metadata within the
+existing bounded completion pass, even when title, cover and duration are present.

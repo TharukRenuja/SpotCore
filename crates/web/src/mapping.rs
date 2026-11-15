@@ -10,6 +10,15 @@ fn text<'a>(value: &'a Value, paths: &[&str]) -> Option<&'a str> {
         .find_map(|p| value.pointer(p).and_then(Value::as_str))
 }
 
+pub(crate) fn artwork_url(url: &str) -> String {
+    match url.strip_prefix("spotify:image:") {
+        Some(id) if id.len() == 40 && id.bytes().all(|byte| byte.is_ascii_hexdigit()) => {
+            format!("https://i.scdn.co/image/{id}")
+        }
+        _ => url.to_owned(),
+    }
+}
+
 pub(crate) fn item(row: &Value) -> Option<MediaItem> {
     let mut value = row;
     for _ in 0..5 {
@@ -24,20 +33,19 @@ pub(crate) fn item(row: &Value) -> Option<MediaItem> {
             value = release;
             continue;
         }
-        if value.get("uri").is_some()
-            || (value.get("_uri").is_some() && value.get("data").is_none())
-        {
-            break;
-        }
         let Some(inner) = [
             "/releases/items/0",
             "/itemV2/data",
             "/item/data",
             "/track/data",
+            "/episode/data",
+            "/chapter/data",
             "/entity/data",
             "/content/data",
             "/data",
             "/track",
+            "/episode",
+            "/chapter",
             "/item",
         ]
         .iter()
@@ -46,15 +54,18 @@ pub(crate) fn item(row: &Value) -> Option<MediaItem> {
         };
         value = inner;
     }
+    if restricted(value) || value["__typename"] == "NotFound" {
+        return None;
+    }
     let uri =
         text(value, &["/uri", "/_uri"]).or_else(|| text(row, &["/track/_uri", "/_uri", "/uri"]))?;
     let kind = match uri.split(':').nth(1) {
         Some("track") => MediaKind::Track,
-        Some("episode") => MediaKind::Episode,
+        Some("episode" | "chapter") => MediaKind::Episode,
         Some("album") => MediaKind::Album,
         Some("artist") => MediaKind::Artist,
         Some("playlist") => MediaKind::Playlist,
-        Some("show") => MediaKind::Show,
+        Some("show" | "audiobook") => MediaKind::Show,
         Some("ad") => MediaKind::Ad,
         Some("user") if uri.contains(":folder:") => MediaKind::Folder,
         Some("user") => MediaKind::User,
@@ -73,9 +84,9 @@ pub(crate) fn item(row: &Value) -> Option<MediaItem> {
     ] {
         if let Some(values) = value.pointer(path).and_then(Value::as_array) {
             for image in values {
-                if let Some(url) = image["url"].as_str() {
+                if let Some(url) = image["url"].as_str().filter(|url| !url.trim().is_empty()) {
                     images.push(Image {
-                        url: url.into(),
+                        url: artwork_url(url),
                         width: image["width"].as_u64().and_then(|n| n.try_into().ok()),
                         height: image["height"].as_u64().and_then(|n| n.try_into().ok()),
                     });
@@ -84,13 +95,21 @@ pub(crate) fn item(row: &Value) -> Option<MediaItem> {
         }
     }
     if images.is_empty()
-        && let Some(url) = text(value, &["/image", "/image_url"])
+        && let Some(url) =
+            text(value, &["/image", "/image_url"]).filter(|url| !url.trim().is_empty())
     {
         images.push(Image {
-            url: url.into(),
+            url: artwork_url(url),
             width: None,
             height: None,
         });
+    }
+    let mut raw = value.clone();
+    // Collection fields live on the row, outside the track or episode payload.
+    for key in ["addedAt", "added_at", "addedBy", "added_by", "uid"] {
+        if let Some(metadata) = row.get(key) {
+            raw[key] = metadata.clone();
+        }
     }
     Some(MediaItem {
         uri: uri.into(),
@@ -115,6 +134,8 @@ pub(crate) fn item(row: &Value) -> Option<MediaItem> {
         duration_ms: [
             "/durationMs",
             "/duration/totalMilliseconds",
+            "/episodeDuration/totalMilliseconds",
+            "/trackDuration/totalMilliseconds",
             "/duration/milliseconds",
             "/duration_ms",
         ]
@@ -123,7 +144,7 @@ pub(crate) fn item(row: &Value) -> Option<MediaItem> {
         uid: text(row, &["/uid"])
             .or_else(|| text(value, &["/uid"]))
             .map(str::to_owned),
-        raw: value.clone(),
+        raw,
     })
 }
 
@@ -274,10 +295,15 @@ pub(crate) fn snapshot(value: &Value) -> Result<Option<PlayerSnapshot>, Error> {
         previous: permitted("canSkipPrevious"),
         volume: true,
         shuffle: permitted("canToggleShuffle"),
-        smart_shuffle: value["smartShuffle"].as_bool().unwrap_or(false)
-            || restrictions["canToggleSmartShuffle"]
-                .as_bool()
-                .unwrap_or(false),
+        smart_shuffle: value["availableShuffleModes"]
+            .as_array()
+            .map(|modes| modes.iter().any(|mode| mode.as_u64() == Some(2)))
+            .unwrap_or_else(|| {
+                value["smartShuffle"].as_bool().unwrap_or(false)
+                    || restrictions["canToggleSmartShuffle"]
+                        .as_bool()
+                        .unwrap_or(false)
+            }),
         repeat: permitted("canRepeatContext") && permitted("canRepeatTrack"),
         queue: true,
         queue_edit: true,
@@ -322,6 +348,7 @@ pub(crate) fn snapshot(value: &Value) -> Result<Option<PlayerSnapshot>, Error> {
 pub(crate) fn queue(value: &Value) -> Result<Queue, Error> {
     if value.is_null() {
         return Ok(Queue {
+            context_uri: None,
             current: None,
             queued: vec![],
             next_up: vec![],
@@ -330,11 +357,29 @@ pub(crate) fn queue(value: &Value) -> Result<Queue, Error> {
     let rows = |key: &str| {
         value[key]
             .as_array()
-            .map(|v| v.iter().filter_map(item).collect())
+            .map(|v| {
+                v.iter()
+                    .filter_map(item)
+                    .filter(|item| {
+                        matches!(
+                            item.kind,
+                            MediaKind::Track | MediaKind::Episode | MediaKind::Ad
+                        )
+                    })
+                    .collect()
+            })
             .ok_or_else(|| Error::Backend("invalid player queue".into()))
     };
     Ok(Queue {
-        current: item(&value["current"]),
+        context_uri: value
+            .get("contextUri")
+            .map(|context| context.as_str().unwrap_or_default().to_owned()),
+        current: item(&value["current"]).filter(|item| {
+            matches!(
+                item.kind,
+                MediaKind::Track | MediaKind::Episode | MediaKind::Ad
+            )
+        }),
         queued: rows("queued")?,
         next_up: rows("nextUp")?,
     })
@@ -344,6 +389,86 @@ pub(crate) fn queue(value: &Value) -> Result<Queue, Error> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn collection_row_metadata_survives_entity_unwrapping() {
+        let mapped = item(
+            &json!({"uid":"row-1", "addedAt":{"isoString":"2026-11-12T10:00:00Z"},
+                "addedBy":{"data":{"username":"listener"}},
+                "itemV2":{"data":{"uri":"spotify:track:one","name":"One"}}
+            }),
+        )
+        .unwrap();
+        assert_eq!(mapped.raw["name"], "One");
+        assert_eq!(mapped.raw["addedAt"]["isoString"], "2026-11-12T10:00:00Z");
+        assert_eq!(mapped.raw["addedBy"]["data"]["username"], "listener");
+        assert_eq!(mapped.uid.as_deref(), Some("row-1"));
+    }
+
+    #[test]
+    fn spoken_playlist_wrappers_keep_chapter_identity_and_queue_occurrences() {
+        let chapter = item(&json!({"uid":"chapter-row","chapter":{"data":{
+            "uri":"spotify:chapter:one","name":"Chapter one","duration":{"totalMilliseconds":123000}
+        }}}))
+        .unwrap();
+        assert_eq!(chapter.kind, MediaKind::Episode);
+        assert_eq!(chapter.uid.as_deref(), Some("chapter-row"));
+        assert_eq!(chapter.duration_ms, Some(123000));
+        let queue = queue(&json!({"current":null,"queued":[],"nextUp":[
+            {"uid":"one","episode":{"data":{"uri":"spotify:episode:a","name":"Episode A"}}},
+            {"uid":"two","episode":{"data":{"uri":"spotify:episode:b","name":"Episode B"}}},
+            {"uid":"three","episode":{"data":{"uri":"spotify:episode:a","name":"Episode A"}}}
+        ]}))
+        .unwrap();
+        assert_eq!(
+            queue
+                .next_up
+                .iter()
+                .map(|item| item.uri.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "spotify:episode:a",
+                "spotify:episode:b",
+                "spotify:episode:a"
+            ]
+        );
+        assert_eq!(queue.next_up[1].name, "Episode B");
+        assert_eq!(queue.next_up[2].uid.as_deref(), Some("three"));
+        assert!(item(&json!({"episode":{"data":{"__typename":"RestrictedContent","uri":"spotify:episode:blocked"}}})).is_none());
+    }
+
+    #[test]
+    fn empty_image_entries_do_not_prevent_valid_fallback_artwork() {
+        let track = item(&json!({"uri":"spotify:track:t","images":[{"url":" "}],"image_url":"https://example.com/cover"})).unwrap();
+        assert_eq!(track.images.len(), 1);
+        assert_eq!(track.images[0].url, "https://example.com/cover");
+    }
+
+    #[test]
+    fn queue_omits_nonplayable_markers_but_keeps_duplicate_occurrences() {
+        let queue = queue(&json!({"current":null,"queued":[],"nextUp":[
+            {"uri":"spotify:delimiter"},
+            {"uri":"spotify:track:same","uid":"one","trackDuration":{"totalMilliseconds":234000}},
+            {"uri":"spotify:track:same","uid":"two"}
+        ]}))
+        .unwrap();
+        assert_eq!(queue.next_up.len(), 2);
+        assert_eq!(queue.next_up[0].uid.as_deref(), Some("one"));
+        assert_eq!(queue.next_up[1].uid.as_deref(), Some("two"));
+        assert_eq!(queue.next_up[0].duration_ms, Some(234000));
+    }
+
+    #[test]
+    fn outer_card_uri_does_not_hide_nested_content() {
+        let card = item(&json!({"uri":"spotify:home:card", "content":{"data":{
+            "uri":"spotify:playlist:mix", "name":"Daily Mix",
+            "images":{"items":[{"sources":[{"url":"https://example.com/mix"}]}]}
+        }}}))
+        .unwrap();
+        assert_eq!(card.uri, "spotify:playlist:mix");
+        assert_eq!(card.name, "Daily Mix");
+        assert_eq!(card.images[0].url, "https://example.com/mix");
+    }
 
     #[test]
     fn graphql_wrappers_keep_card_identity_names_and_artwork() {
@@ -403,6 +528,18 @@ mod tests {
         assert!(!restricted.capabilities.smart_shuffle);
         assert_eq!(restricted.smart_shuffle, None);
     }
+    #[test]
+    fn available_shuffle_modes_enable_smart_before_it_is_active() {
+        for (modes, supported) in [(json!([0, 1, 2]), true), (json!([0, 1]), false)] {
+            let state = snapshot(&json!({"shuffle": true, "smartShuffle": false,
+                "availableShuffleModes": modes, "restrictions": {}}))
+            .unwrap()
+            .unwrap();
+            assert_eq!(state.smart_shuffle, Some(false));
+            assert_eq!(state.capabilities.smart_shuffle, supported);
+        }
+    }
+
     #[test]
     fn speed_capability_respects_spotify_restrictions() {
         for (reasons, allowed) in [

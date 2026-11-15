@@ -128,6 +128,8 @@ pub enum PlaybackEvent {
     CapabilitiesChanged(Capabilities),
     Snapshot(Box<PlayerSnapshot>),
     QueueChanged(Queue),
+    /// The engine reported a queue change; fetch authoritative queue contents.
+    QueueInvalidated,
     SessionChanged,
 }
 
@@ -151,6 +153,12 @@ pub enum Error {
     DrmUnavailable(String),
     AccountRestricted(&'static str),
     NotAuthenticated,
+    NativeAuthenticationRequired,
+    NativeStartupTimeout(&'static str),
+    NativeStartupFailed {
+        native: Box<Error>,
+        fallback: Box<Error>,
+    },
     Disconnected,
     Timeout,
     EventsLagged(u64),
@@ -176,6 +184,9 @@ impl fmt::Display for Error {
             }
             Self::Unsupported => f.write_str("command is not supported by this session"),
             Self::NotAuthenticated => f.write_str("authentication is required"),
+            Self::NativeStartupTimeout(operation) => write!(f, "Soloist setup timed out while {operation}"),
+            Self::NativeAuthenticationRequired => f.write_str("Soloist is running but has not authenticated with Spotify; this device may need pairing"),
+            Self::NativeStartupFailed { native, fallback } => write!(f, "native startup failed: {native}; Web fallback failed: {fallback}"),
             Self::Timeout => {
                 f.write_str("operation timed out; a submitted write may have completed")
             }

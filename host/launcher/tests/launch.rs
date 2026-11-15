@@ -15,6 +15,57 @@ fn invalid_invocations_and_recursion_are_rejected() {
     assert!(String::from_utf8_lossy(&result.stderr).contains("own backend"));
 }
 
+#[test]
+fn embedded_invocations_reject_missing_arguments_and_recursion() {
+    assert!(
+        !launcher()
+            .arg(spotcore_engine::EMBEDDED_ARGUMENT)
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+    let result = launcher()
+        .arg(spotcore_engine::EMBEDDED_ARGUMENT)
+        .args(["--backend", env!("CARGO_BIN_EXE_spotcore-engine"), "--"])
+        .output()
+        .unwrap();
+    assert!(!result.status.success());
+    assert!(String::from_utf8_lossy(&result.stderr).contains("own backend"));
+}
+
+#[cfg(unix)]
+#[test]
+fn embedded_mode_preserves_literals_exit_status_and_parent_guard() {
+    let output = launcher()
+        .arg(spotcore_engine::EMBEDDED_ARGUMENT)
+        .args([
+            "--parent-pid",
+            &std::process::id().to_string(),
+            "--backend",
+            "/bin/sh",
+            "--",
+            "-c",
+            "printf '%s\\n%s\\n%s|%s' \"$3\" \"$SPOTCORE_LAUNCHER_TEST\" \"$2\" \"$PPID\"; exit 23",
+            "fixture",
+            "--parent-pid",
+            "1",
+            "spaces ; $literal",
+        ])
+        .env("SPOTCORE_LAUNCHER_TEST", "synthetic-secret")
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(23));
+    assert!(output.stderr.is_empty());
+    let text = String::from_utf8(output.stdout).unwrap();
+    let mut lines = text.lines();
+    assert_eq!(lines.next(), Some("spaces ; $literal"));
+    assert_eq!(lines.next(), Some("synthetic-secret"));
+    let (argument, parent) = lines.next().unwrap().split_once('|').unwrap();
+    assert_eq!(argument, parent);
+    assert_ne!(argument, "1");
+}
+
 #[cfg(unix)]
 #[test]
 fn forwards_literal_arguments_environment_and_exit_status() {

@@ -10,8 +10,11 @@ pub struct AccountManager {
     web_options: crate::WebPlayerOptions,
     role: crate::BrowserRole,
     engine: crate::BrowserEngine,
+    application_name: String,
     device_name: Option<String>,
     prefer_native: bool,
+    #[cfg(feature = "native")]
+    allow_native_pairing: bool,
 }
 
 impl AccountManager {
@@ -30,8 +33,11 @@ impl AccountManager {
             web_options: crate::WebPlayerOptions::default(),
             role: crate::BrowserRole::Playback,
             engine: crate::BrowserEngine::Auto,
+            application_name: "SpotCore".into(),
             device_name: None,
             prefer_native: true,
+            #[cfg(feature = "native")]
+            allow_native_pairing: false,
         })
     }
 
@@ -39,6 +45,17 @@ impl AccountManager {
     /// Select Web explicitly without deleting the saved native credentials.
     pub fn prefer_native(&mut self, enabled: bool) {
         self.prefer_native = enabled;
+    }
+
+    /// Enables manual pairing only for an explicitly requested setup attempt.
+    #[cfg(feature = "native")]
+    pub fn native_pairing(&mut self, enabled: bool) {
+        self.allow_native_pairing = enabled;
+    }
+
+    pub fn application_name(mut self, name: impl Into<String>) -> Self {
+        self.application_name = name.into();
+        self
     }
 
     pub fn engine(mut self, engine: crate::BrowserEngine) -> Self {
@@ -105,20 +122,51 @@ impl AccountManager {
         Ok(())
     }
 
-    /// Selects a saved account without transferring or starting playback.
+    /// Selects a saved account without starting playback.
+    /// A pending native login may activate an account-scoped receiver while paused.
     pub async fn switch_to(&mut self, id: &str) -> Result<(), Error> {
+        self.switch_to_services(id, None).await
+    }
+
+    /// Shares an app's early HTTP client; account identity is still verified before selection.
+    pub async fn switch_to_with_services(
+        &mut self,
+        id: &str,
+        api: crate::Api,
+    ) -> Result<(), Error> {
+        if api.browser().is_ok() {
+            return Err(Error::InvalidInput("HTTP services required"));
+        }
+        self.switch_to_services(id, Some(api)).await
+    }
+
+    async fn switch_to_services(&mut self, id: &str, api: Option<crate::Api>) -> Result<(), Error> {
         let store = self.store.clone();
         let owned_id = id.to_owned();
         let profile = blocking(move || store.load_profile(&owned_id))
             .await?
             .ok_or(Error::NotAuthenticated)?;
-        self.open(profile, true, false).await
+        if api.is_some()
+            && profile
+                .web
+                .as_ref()
+                .and_then(|web| web.sp_dc.as_ref())
+                .is_none()
+        {
+            return Err(Error::InvalidInput(
+                "shared services require a saved cookie account",
+            ));
+        }
+        if let Some(prefer_native) = profile.prefer_native {
+            self.prefer_native = prefer_native;
+        }
+        self.open(profile, true, false, api).await
     }
 
     /// Uses credentials supplied by the app without persisting them in AccountStore.
     /// The browser still maintains its own cookies in this account's profile directory.
     pub async fn switch_with(&mut self, profile: AccountProfile) -> Result<(), Error> {
-        self.open(profile, false, false).await
+        self.open(profile, false, false, None).await
     }
 
     /// Opens interactive login in this account's isolated profile, then verifies the account.
@@ -127,7 +175,7 @@ impl AccountManager {
         let store = self.store.clone();
         let owned_id = id.to_owned();
         let profile = blocking(move || login_profile(&store, &owned_id)).await?;
-        self.open(profile, true, true).await
+        self.open(profile, true, true, None).await
     }
 
     async fn open(
@@ -135,12 +183,14 @@ impl AccountManager {
         mut profile: AccountProfile,
         persist: bool,
         login: bool,
+        services: Option<crate::Api>,
     ) -> Result<(), Error> {
         spotcore_auth::account_key(&profile.canonical_username).map_err(storage_error)?;
         self.close().await?;
         let (paths, lease) = self.lease(&profile.canonical_username)?;
         if login {
             crate::web::HostLauncher::new()
+                .application_name(&self.application_name)
                 .data_dir(paths.root())
                 .engine(self.engine)
                 .profile_dir(paths.profile())
@@ -149,45 +199,114 @@ impl AccountManager {
             profile.web = None;
         }
         let mut builder = SpotCore::builder()
+            .application_name(&self.application_name)
             .data_dir(paths.root())
+            .profile_dir(paths.profile())
             .web_options(self.web_options.clone())
             .browser_role(self.role)
             .engine(self.engine);
+        #[cfg(feature = "native")]
+        {
+            builder = builder.native_pairing(self.allow_native_pairing);
+        }
         if let Some(name) = &self.device_name {
             builder = builder.device_name(name.clone());
         }
         if !login && let Some(cookie) = profile.web.as_ref().and_then(|web| web.sp_dc.as_ref()) {
             builder = builder.session_cookie(cookie);
         }
-        let (session, verified_account) = if let Some(cookie) = profile
+        #[cfg(feature = "native")]
+        if self.prefer_native
+            && let Some(credentials) = profile.soloist.clone()
+        {
+            builder = builder.with_native_credentials(credentials);
+        }
+        let mut services = services;
+        let (session, verified_account) = if let Some(_cookie) = profile
             .web
             .as_ref()
             .and_then(|web| web.sp_dc.as_ref())
             .filter(|_| !login)
         {
-            let api = crate::Api::from_cookie(cookie.clone(), &paths)?;
-            let account = api.users().me().await?;
-            verify_identity(&profile.canonical_username, &account.username)?;
-            #[cfg(feature = "native")]
-            if self.prefer_native
-                && let Some(credentials) = profile.soloist.clone()
-            {
-                builder = builder.with_native_credentials(credentials);
-            }
-            (builder.launch_with_services(api).await?, Some(account))
+            let api = match services.take() {
+                Some(api) => api,
+                None => crate::Api::from_credentials(
+                    profile.web.clone().ok_or(Error::NotAuthenticated)?,
+                    &paths,
+                )?,
+            };
+            services = Some(api.clone());
+            let verification_api = api.clone();
+            let (verification, startup) = tokio::join!(
+                async { verification_api.users().me().await },
+                builder.clone().launch_with_services(api),
+            );
+            let mut session = startup?;
+            let verified = verification.and_then(|account| {
+                verify_identity(&profile.canonical_username, &account.username)?;
+                Ok(account)
+            });
+            let account = match verified {
+                Ok(account) => account,
+                Err(error) => {
+                    session.shutdown_owned().await?;
+                    return Err(error);
+                }
+            };
+            (session, Some(account))
         } else {
-            (SpotCore::from_web(builder.launch_web().await?), None)
+            (
+                SpotCore::from_web(builder.clone().launch_web().await?),
+                None,
+            )
         };
-        #[cfg(feature = "native")]
         let mut session = session;
         #[cfg(feature = "native")]
-        let verify_before_native = verified_account.is_none();
+        let mut verify_before_native = verified_account.is_none();
         let result = async {
             let account = match verified_account {
                 Some(account) => account,
                 None => session.users().me().await?,
             };
             verify_identity(&profile.canonical_username, &account.username)?;
+            if let Some(api) = &services
+                && let Ok(credentials) = api.web_credentials().await
+            {
+                profile.web = Some(credentials);
+            }
+            if services.is_none()
+                && session.api.browser().is_ok()
+                && let Ok((api, credentials)) = session.api.http_services(&paths).await
+                && let Ok(http_account) = api.users().me().await
+            {
+                verify_identity(&profile.canonical_username, &http_account.username)?;
+                profile.web = Some(api.web_credentials().await.unwrap_or(credentials));
+                let use_http = self.role == crate::BrowserRole::Services;
+                #[cfg(feature = "native")]
+                let use_http = use_http || (self.prefer_native && profile.soloist.is_some());
+                if use_http {
+                    // Retire the old Web receiver before registering Soloist with the same name.
+                    session.shutdown_owned().await?;
+                    let candidate = builder.clone().launch_http(api).await?;
+                    if self.role == crate::BrowserRole::Services
+                        || candidate.playback_mode() == crate::PlaybackMode::Native
+                    {
+                        session = candidate;
+                    } else {
+                        let fallback = candidate.native_fallback.clone();
+                        candidate.shutdown().await?;
+                        let web = builder.clone().launch_web().await.map_err(|error| {
+                            crate::session::startup_error(fallback.clone(), error)
+                        })?;
+                        session = SpotCore::from_web(web);
+                        session.native_fallback = fallback;
+                    }
+                    #[cfg(feature = "native")]
+                    {
+                        verify_before_native = false;
+                    }
+                }
+            }
             profile.display_name = Some(account.name);
             profile.tier = Some(account.tier);
             profile.tier_checked_at_ms = Some(
@@ -205,13 +324,18 @@ impl AccountManager {
                 && let Some(credentials) = profile.soloist.clone()
             {
                 session
-                    .try_native(credentials, &paths, self.device_name.as_deref())
+                    .try_native(
+                        credentials,
+                        &paths,
+                        self.device_name.as_deref(),
+                        self.allow_native_pairing,
+                    )
                     .await;
             }
             if self.role == crate::BrowserRole::Playback
                 && session.playback_mode() == crate::PlaybackMode::Web
             {
-                session.drm_support().await?.require_playback()?;
+                session.require_web_playback().await?;
             }
             Ok::<_, Error>(())
         }
@@ -337,6 +461,19 @@ mod tests {
         fn delete(&self, _: &str) -> std::io::Result<()> {
             Ok(())
         }
+    }
+
+    #[cfg(feature = "native")]
+    #[test]
+    fn ordinary_account_restore_never_enables_interactive_pairing() {
+        let paths = Paths::new(std::env::temp_dir().join("spotcore-pairing-opt-in"));
+        let mut manager = AccountManager::new(paths.clone()).unwrap();
+        assert!(!manager.allow_native_pairing);
+        manager.native_pairing(true);
+        assert!(manager.allow_native_pairing);
+        manager.native_pairing(false);
+        assert!(!manager.allow_native_pairing);
+        assert!(!AccountManager::new(paths).unwrap().allow_native_pairing);
     }
 
     #[test]

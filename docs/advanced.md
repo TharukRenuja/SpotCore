@@ -81,7 +81,7 @@ Prefer `catalog().track_info()` when its typed fields are sufficient. Raw querie
 
 `SoloistConfig::new(binary_path, api_key, paths)` defaults to device name SpotCore, an automatically allocated WebSocket port and native data/cache paths. `SoloistProcess::spawn(config).await` owns a child and exposes its `ws_url`; call `kill().await` on the process when finished. The API key must not appear in app logs even though the vendor process interface requires a command argument.
 
-`SoloistBackend::launch`, `launch_with`, `launch_as`, `connect` and `connect_named` provide explicit daemon/backend paths. Use their generated signatures rather than guessing WebSocket parameters. `wait_authenticated()` confirms daemon session readiness, not account-tier eligibility for the unified SDK policy. `NativeConfig`, `NativeProcess` and `NativeManager` are compatibility aliases for the Soloist types. The SDK’s native protocol types describe control messages; they do not expose decoded PCM or encrypted stream contents.
+`SoloistBackend::launch`, `launch_with`, `launch_as`, `connect` and `connect_named` provide explicit daemon/backend paths. Use their generated signatures rather than guessing WebSocket parameters. Socket connection returns without waiting for authentication. `authentication_state()` distinguishes a live unauthenticated daemon from a disconnected socket; `wait_authenticated()` waits for daemon session readiness, not account-tier eligibility for the unified SDK policy. `NativeConfig`, `NativeProcess` and `NativeManager` are compatibility aliases for the Soloist types. The SDK’s native protocol types describe control messages; they do not expose decoded PCM or encrypted stream contents.
 
 ## Browser and host lifecycle reference
 
@@ -90,3 +90,21 @@ Prefer `catalog().track_info()` when its typed fields are sufficient. Raw querie
 `HostLauncher` offers the same engine/path/profile/DRM/port/cookie/headless/cuts setters as managed startup, plus `defer_navigation` for coordinating cookie seeding. `spawn()` applies startup policy; `candidates()`, `automatic()`, `failure(error)` and `unavailable(attempts)` support candidate diagnostics. `seed_session(host)` seeds a launched session; `login()` opens login. `forget_system_profile(root, profile)` removes a system-adapter profile through the helper rather than treating it as a generic browser directory.
 
 `ManagedHost` exposes `cdp_url()`, `port()`, `is_custom_engine()` and `engine()`. Call `shutdown().await` to await owned-process termination. A host handle is not proof that Spotify is authenticated, media is ready or playback is audible.
+
+Raw requests using `application/x-protobuf` negotiate protobuf responses as well.
+Other raw requests, including image uploads, retain JSON response negotiation.
+
+HTTP queue edits accept visible context occurrences as well as manual occurrences.
+They require exact URI/UID identities and preserve ads, hidden continuations and
+previous tracks. Reorder can explicitly change manual/context membership when a
+row moves between the queue sections. Restrictions remain enforced.
+
+`devices().edit_queue_occurrence(device, item, before, after, manual)` uses HTTP
+for both browser and native sessions, pins the receiver, and rejects an inactive
+receiver. Omit anchors and membership to remove; provide an anchor to move.
+
+`devices().insert_queue_items(device, uris, before, after, manual)` inserts new
+occurrences at an exact visible slot on the named active receiver. Use one anchor
+or neither (manual-queue head). Set `manual` to false for a Next up insertion.
+Duplicate URIs receive distinct UIDs; ads, hidden continuations and previous rows
+are retained. The HTTP payload still needs live verification against Spotify.

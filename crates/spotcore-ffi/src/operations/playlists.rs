@@ -95,6 +95,21 @@ pub(super) async fn call(
             let p: Args = parse(arguments)?;
             encode(sdk.playlists().follow_show(&p.value).await?)
         }
+        "insert_tracks" => {
+            #[derive(serde::Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Args {
+                value: String,
+                tracks: Vec<String>,
+                before_uid: String,
+            }
+            let p: Args = parse(arguments)?;
+            encode(
+                sdk.playlists()
+                    .insert_tracks(&p.value, &p.tracks, &p.before_uid)
+                    .await?,
+            )
+        }
         "join" => {
             #[derive(serde::Deserialize)]
             #[serde(deny_unknown_fields)]
@@ -204,6 +219,16 @@ pub(super) async fn call(
             }
             let p: Args = parse(arguments)?;
             encode(sdk.playlists().rename(&p.value, &p.name).await?)
+        }
+        "rows" => {
+            #[derive(serde::Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Args {
+                value: String,
+                paging: Paging,
+            }
+            let p: Args = parse(arguments)?;
+            encode(sdk.playlists().rows(&p.value, p.paging).await?)
         }
         "set_access" => {
             #[derive(serde::Deserialize)]

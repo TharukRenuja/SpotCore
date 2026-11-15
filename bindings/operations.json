@@ -62,6 +62,14 @@
     "result": "AlbumInfo"
   },
   {
+    "operation": "catalog.album_page",
+    "arguments": {
+      "value": "String",
+      "paging": "Paging"
+    },
+    "result": "Value"
+  },
+  {
     "operation": "catalog.album_tracks",
     "arguments": {
       "value": "String",
@@ -167,14 +175,69 @@
     "result": "AudioQuality"
   },
   {
+    "operation": "devices.edit_queue_occurrence",
+    "arguments": {
+      "device": "String",
+      "item": "QueueItem",
+      "before": "Option<QueueItem>",
+      "after": "Option<QueueItem>",
+      "manual": "Option<bool>"
+    },
+    "result": "()"
+  },
+  {
+    "operation": "devices.insert_queue_items",
+    "arguments": {
+      "device": "String",
+      "uris": "Vec<String>",
+      "before": "Option<QueueItem>",
+      "after": "Option<QueueItem>",
+      "manual": "bool"
+    },
+    "result": "()"
+  },
+  {
     "operation": "devices.list",
     "arguments": {},
     "result": "Vec<Device>"
   },
   {
+    "operation": "devices.play_items",
+    "arguments": {
+      "target": "Option<String>",
+      "context": "Option<String>",
+      "uris": "Vec<String>",
+      "position": "std::time::Duration"
+    },
+    "result": "()"
+  },
+  {
+    "operation": "devices.playback_state",
+    "arguments": {},
+    "result": "Option<spotcore_core::PlayerSnapshot>"
+  },
+  {
     "operation": "devices.pull_here",
     "arguments": {},
     "result": "Value"
+  },
+  {
+    "operation": "devices.queue",
+    "arguments": {},
+    "result": "spotcore_core::Queue"
+  },
+  {
+    "operation": "devices.queue_snapshot",
+    "arguments": {},
+    "result": "spotcore_core::Queue"
+  },
+  {
+    "operation": "devices.replace_queued",
+    "arguments": {
+      "device": "String",
+      "uris": "Vec<String>"
+    },
+    "result": "()"
   },
   {
     "operation": "devices.set_audio_quality",
@@ -228,11 +291,26 @@
     "result": "Value"
   },
   {
+    "operation": "extras.prerelease",
+    "arguments": {
+      "value": "String"
+    },
+    "result": "Value"
+  },
+  {
     "operation": "extras.radio",
     "arguments": {
       "value": "String"
     },
     "result": "Value"
+  },
+  {
+    "operation": "extras.radio_tracks",
+    "arguments": {
+      "seed": "String",
+      "limit": "u32"
+    },
+    "result": "Vec<MediaItem>"
   },
   {
     "operation": "extras.radio_uri",
@@ -529,6 +607,11 @@
     "result": "Value"
   },
   {
+    "operation": "playback.activate_local",
+    "arguments": {},
+    "result": "()"
+  },
+  {
     "operation": "playback.add_to_queue",
     "arguments": {
       "uris": "Vec<String>"
@@ -596,6 +679,11 @@
     "result": "bool"
   },
   {
+    "operation": "playback.local_device",
+    "arguments": {},
+    "result": "Option<crate::web::Device>"
+  },
+  {
     "operation": "playback.next",
     "arguments": {},
     "result": "()"
@@ -619,6 +707,15 @@
       "track": "Option<String>",
       "index": "Option<u32>",
       "position": "Option<u64>"
+    },
+    "result": "()"
+  },
+  {
+    "operation": "playback.play_items",
+    "arguments": {
+      "context": "Option<String>",
+      "uris": "Vec<String>",
+      "position": "u64"
     },
     "result": "()"
   },
@@ -821,6 +918,15 @@
     "result": "Value"
   },
   {
+    "operation": "playlists.insert_tracks",
+    "arguments": {
+      "value": "String",
+      "tracks": "Vec<String>",
+      "before_uid": "String"
+    },
+    "result": "()"
+  },
+  {
     "operation": "playlists.join",
     "arguments": {
       "value": "String",
@@ -902,6 +1008,14 @@
       "name": "String"
     },
     "result": "Value"
+  },
+  {
+    "operation": "playlists.rows",
+    "arguments": {
+      "value": "String",
+      "paging": "Paging"
+    },
+    "result": "Page<PlaylistRow>"
   },
   {
     "operation": "playlists.set_access",

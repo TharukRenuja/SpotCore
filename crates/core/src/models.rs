@@ -105,6 +105,8 @@ pub struct PlayerSnapshot {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Queue {
+    #[serde(default)]
+    pub context_uri: Option<String>,
     pub current: Option<MediaItem>,
     pub queued: Vec<MediaItem>,
     pub next_up: Vec<MediaItem>,

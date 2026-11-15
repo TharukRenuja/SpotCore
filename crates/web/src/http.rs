@@ -198,12 +198,12 @@ impl Http {
             .client
             .request(method, url)
             .bearer_auth(session.access_token.expose())
-            .header("client-token", token)
+            .header("client-token", token.as_str())
             .header("app-platform", "WebPlayer")
             .header("spotify-app-version", session.app_version)
             .header("origin", "https://open.spotify.com")
             .header("referer", "https://open.spotify.com/")
-            .header("accept", "application/json");
+            .header("accept", response_type(content_type));
         if let Some(payload) = payload {
             request = request.header("content-type", content_type).body(payload);
         }
@@ -224,8 +224,14 @@ impl Http {
             );
         }
         if response.status().as_u16() == 401 {
-            api.invalidate_session().await;
-            *self.token.lock().await = None;
+            api.invalidate_session(session.access_token.expose()).await;
+            let mut cached = self.token.lock().await;
+            if cached
+                .as_ref()
+                .is_some_and(|current| current.value == token)
+            {
+                *cached = None;
+            }
         }
         if !(graphql_rejection && response.status().as_u16() == 412) {
             check_status(&response)?;
@@ -309,6 +315,14 @@ fn retry_after(response: &reqwest::Response) -> Option<u64> {
         .ok()
 }
 
+fn response_type(content_type: &str) -> &str {
+    if content_type == "application/x-protobuf" {
+        content_type
+    } else {
+        "application/json"
+    }
+}
+
 fn check_status(response: &reqwest::Response) -> Result<(), Error> {
     if !response.status().is_success() {
         return Err(Error::Http {
@@ -322,6 +336,16 @@ fn check_status(response: &reqwest::Response) -> Result<(), Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn protobuf_requests_negotiate_binary_responses_without_changing_json_uploads() {
+        assert_eq!(
+            super::response_type("application/x-protobuf"),
+            "application/x-protobuf"
+        );
+        assert_eq!(super::response_type("application/json"), "application/json");
+        assert_eq!(super::response_type("image/jpeg"), "application/json");
+    }
+
     #[test]
     fn cooldowns_are_host_scoped_monotonic_and_return_remaining_wait() {
         let now = Instant::now();

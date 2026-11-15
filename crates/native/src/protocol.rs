@@ -176,8 +176,12 @@ pub enum SoloistServerEvent {
     PositionSync(PositionSyncEvent),
     #[serde(rename = "auth_state")]
     AuthState(serde_json::Value),
-    #[serde(rename = "queue")]
+    #[serde(rename = "queue_changed", alias = "queue")]
     Queue(serde_json::Value),
+    #[serde(rename = "context_changed")]
+    ContextChanged(serde_json::Value),
+    #[serde(rename = "options_changed")]
+    OptionsChanged(serde_json::Value),
     #[serde(rename = "device_changed")]
     DeviceChanged(DeviceChangedEvent),
     #[serde(other)]
@@ -187,6 +191,29 @@ pub enum SoloistServerEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn current_granular_event_names_are_recognized() {
+        assert!(matches!(
+            serde_json::from_str::<SoloistServerEvent>(r#"{"type":"queue_changed","upcoming":[]}"#)
+                .unwrap(),
+            SoloistServerEvent::Queue(_)
+        ));
+        assert!(matches!(
+            serde_json::from_str::<SoloistServerEvent>(
+                r#"{"type":"context_changed","context":{"uri":"spotify:album:new"}}"#
+            )
+            .unwrap(),
+            SoloistServerEvent::ContextChanged(_)
+        ));
+        assert!(matches!(
+            serde_json::from_str::<SoloistServerEvent>(
+                r#"{"type":"options_changed","options":{"shuffle":true}}"#
+            )
+            .unwrap(),
+            SoloistServerEvent::OptionsChanged(_)
+        ));
+    }
 
     #[test]
     fn test_command_serialization() {

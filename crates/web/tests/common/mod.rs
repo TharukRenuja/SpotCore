@@ -128,6 +128,7 @@ impl MockBrowser {
                             },
                             "Fetch.getResponseBody"=>result=body_response.lock().unwrap().clone(),
                             "Network.setCookie"=>result=json!({"success":true}),
+                            "Network.getCookies"=>result=json!({"cookies":body_response.lock().unwrap().get("cookies").cloned().unwrap_or(json!([]))}),
                             "Runtime.enable"=>{ws.send(Message::Text(context(current_context).to_string().into())).await.unwrap();},
                             "Runtime.evaluate"=>{
                                 assert_eq!(request["params"]["uniqueContextId"],format!("context-{current_context}"));
@@ -136,7 +137,7 @@ impl MockBrowser {
                                     let args:Vec<Value>=serde_json::from_str(&format!("[{arguments}]")).unwrap();
                                     let name=args[0].as_str().unwrap();let params=args[1].clone();
                                     log.lock().unwrap().push((name.into(),params.clone()));
-                                    if name=="test.pending" {held.push(id);continue;}
+                                    if name=="test.pending" || (name=="service.call" && body_response.lock().unwrap()["hold_service"]==params["service"]) {held.push(id);continue;}
                                     let value=match name {
                                         "test.echo"=>params,
                                         "test.reorder"=>{let packet=json!({"id":id,"result":{"result":{"value":params}}});if let Some(first)=reorder.take(){ws.send(Message::Text(packet.to_string().into())).await.unwrap();ws.send(Message::Text(first)).await.unwrap();}else{reorder=Some(packet.to_string().into());}continue;},
@@ -147,7 +148,13 @@ impl MockBrowser {
                                         "player.queue"=>json!({"current":null,"queued":[],"nextUp":[]}),
                                         "library.contains"=>json!(params["uris"].as_array().unwrap().iter().map(|_|true).collect::<Vec<_>>()),
                                         "service.call"=>match (params["service"].as_str().unwrap(),params["method"].as_str().unwrap()) {
-                                            ("ConnectDevicesAPI","getDevices")=>json!([{ "id":"native-test", "name":"Test native", "isActive":true, "isLocal":false }]),
+                                            ("ConnectDevicesAPI","getDevices")=>body_response.lock().unwrap().get("devices").cloned().unwrap_or_else(|| json!([{ "id":"native-test", "name":"Test native", "isActive":true, "isLocal":false }])),
+                                            ("ConnectTransferAPI","transferPlayback")=>{
+                                                if let Some(devices)=body_response.lock().unwrap().get_mut("devices").and_then(Value::as_array_mut) {
+                                                    for device in devices {device["isActive"]=json!(device["id"]==params["args"][0]);}
+                                                }
+                                                json!(true)
+                                            },
                                             ("RootlistAPI","contains")=>json!(params["args"][0].as_array().unwrap().iter().map(|_|false).collect::<Vec<_>>()),
                                             ("SocialConnectAPI","getEnabled")=>json!("RESTRICTED"),
                                             ("PlaylistPermissionsAPI","getPermissionGrant")=>json!({"token":"invite-token"}),

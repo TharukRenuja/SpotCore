@@ -341,6 +341,13 @@ impl WebBackend {
                 }
                 ("player.play", args)
             }
+            Command::SkipToQueue(item) => {
+                super::domains::uri(&item.uri)?;
+                if item.uid.is_empty() {
+                    return Err(Error::InvalidInput("queue item has no uid"));
+                }
+                ("queue.skipTo", json!({"uri":item.uri,"uid":item.uid}))
+            }
             Command::SetSpeed(speed) => {
                 if !speed.is_finite() || !(0.5..=3.5).contains(&speed) {
                     return Err(Error::InvalidInput("podcast speed must be 0.5..=3.5"));
@@ -481,7 +488,11 @@ impl WebBackend {
             && self.api.browser().is_ok()
             && matches!(method, "player.play" | "player.resume")
         {
-            self.api.devices().pull_here().await?;
+            // Re-transferring an already active receiver interrupts manual track changes.
+            let devices = self.api.devices().list().await?;
+            if !devices.iter().any(|device| device.local && device.active) {
+                self.api.devices().pull_here().await?;
+            }
         }
         self.api.call(method, args).await?;
         Ok(())

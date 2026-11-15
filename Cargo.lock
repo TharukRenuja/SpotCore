@@ -3263,6 +3263,7 @@ dependencies = [
  "sha1",
  "spotcore-auth",
  "spotcore-core",
+ "spotcore-engine",
  "tokio",
  "tokio-tungstenite",
  "url",

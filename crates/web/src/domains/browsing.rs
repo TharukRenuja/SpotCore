@@ -399,9 +399,126 @@ fn radio_uri(body: &Value) -> Result<Option<String>, Error> {
     Ok(Some(value.into()))
 }
 
+fn radio_is_playlist(value: &str) -> Result<bool, Error> {
+    uri(value)?;
+    match value.split(':').nth(1) {
+        Some("playlist" | "playlist_v2") => Ok(true),
+        Some("station") => Ok(false),
+        _ => Err(Error::Unsupported),
+    }
+}
+
+fn context_track_uri(row: &Value) -> Option<String> {
+    if let Some(uri) = row["uri"].as_str().filter(|uri| !uri.is_empty()) {
+        return (uri.starts_with("spotify:track:") && !uri.ends_with(':')).then(|| uri.into());
+    }
+    use base64::Engine;
+    let bytes: [u8; 16] = base64::engine::general_purpose::STANDARD
+        .decode(row["gid"].as_str()?)
+        .ok()?
+        .try_into()
+        .ok()?;
+    let mut number = u128::from_be_bytes(bytes);
+    let alphabet = b"0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    let mut id = [b'0'; 22];
+    for digit in id.iter_mut().rev() {
+        *digit = alphabet[(number % 62) as usize];
+        number /= 62;
+    }
+    Some(format!("spotify:track:{}", std::str::from_utf8(&id).ok()?))
+}
+
+fn station_tracks(body: &Value, limit: usize) -> Result<Vec<MediaItem>, Error> {
+    let pages = body["pages"]
+        .as_array()
+        .ok_or_else(|| Error::Backend("radio context has no pages".into()))?;
+    let mut seen = std::collections::BTreeSet::new();
+    let mut tracks = Vec::new();
+    for page in pages {
+        let rows = page["tracks"]
+            .as_array()
+            .ok_or_else(|| Error::Backend("radio page has no inline tracks".into()))?;
+        for row in rows {
+            let Some(uri) = context_track_uri(row).filter(|uri| seen.insert(uri.clone())) else {
+                continue;
+            };
+            let mut normalized = crate::connect::track(row);
+            normalized["uri"] = uri.into();
+            if let Some(track) = item(&normalized) {
+                tracks.push(track);
+                if tracks.len() >= limit {
+                    return Ok(tracks);
+                }
+            }
+        }
+    }
+    Ok(tracks)
+}
+
+fn station_needs_metadata(track: &MediaItem) -> bool {
+    let artists = track
+        .raw
+        .pointer("/artists/items")
+        .or_else(|| track.raw.get("artists"));
+    let has_artists = artists.and_then(Value::as_array).is_some_and(|artists| {
+        artists.iter().any(|artist| {
+            artist
+                .get("name")
+                .or_else(|| artist.pointer("/profile/name"))
+                .and_then(Value::as_str)
+                .is_some_and(|name| !name.trim().is_empty())
+        })
+    });
+    track.name.is_empty() || track.images.is_empty() || track.duration_ms.is_none() || !has_artists
+}
+
 impl Extras<'_> {
     pub async fn radio_uri(&self, seed: &str) -> Result<Option<String>, Error> {
         radio_uri(&self.radio(seed).await?)
+    }
+
+    /// Reads radio tracks from either a generated playlist or a station context.
+    pub async fn radio_tracks(&self, seed: &str, limit: u32) -> Result<Vec<MediaItem>, Error> {
+        Paging { offset: 0, limit }.validate()?;
+        let Some(context) = self.radio_uri(seed).await? else {
+            return Ok(Vec::new());
+        };
+        if radio_is_playlist(&context)? {
+            return Ok(self
+                .0
+                .playlists()
+                .tracks(&context, Paging { offset: 0, limit })
+                .await?
+                .items);
+        }
+        let body = self
+            .0
+            .request(
+                "GET",
+                &format!(
+                    "https://spclient.wg.spotify.com/context-resolve/v1/{}",
+                    segment(&context)
+                ),
+                None,
+            )
+            .await?;
+        let mut tracks = station_tracks(&body, limit as usize)?;
+        use futures_util::{StreamExt, stream};
+        let api = self.0;
+        let enrich = stream::iter(
+            tracks
+                .iter_mut()
+                .filter(|track| station_needs_metadata(track)),
+        )
+        .map(|track| async move {
+            if let Ok(full) = api.catalog().track(&track.uri).await {
+                *track = full;
+            }
+        })
+        .buffer_unordered(4)
+        .collect::<Vec<_>>();
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(8), enrich).await;
+        Ok(tracks)
     }
 }
 
@@ -409,6 +526,61 @@ impl Extras<'_> {
 mod discovery_tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn radio_context_type_determines_its_reader() {
+        assert!(radio_is_playlist("spotify:playlist:p").unwrap());
+        assert!(radio_is_playlist("spotify:playlist_v2:p").unwrap());
+        assert!(!radio_is_playlist("spotify:station:playlist:p").unwrap());
+        assert!(radio_is_playlist("spotify:show:s").is_err());
+        assert_eq!(
+            radio_uri(&json!({"mediaItems":[{"uri":"spotify:station:playlist:p"}]}))
+                .unwrap()
+                .as_deref(),
+            Some("spotify:station:playlist:p")
+        );
+    }
+
+    #[test]
+    fn station_rows_with_missing_artist_names_need_catalog_metadata() {
+        let rows = station_tracks(
+            &json!({"pages":[{"tracks":[{
+                "uri":"spotify:track:a", "metadata":{
+                    "title":"Song", "duration":"123000", "image_url":"https://example.com/cover"
+                }
+            }]}]}),
+            50,
+        )
+        .unwrap();
+        let mut track = rows.into_iter().next().unwrap();
+        assert!(station_needs_metadata(&track));
+        track.raw["artists"] = json!([{"name":"  ", "uri":"spotify:artist:a"}]);
+        assert!(station_needs_metadata(&track));
+        track.raw["artists"] = json!([{"name":"Artist", "uri":"spotify:artist:a"}]);
+        assert!(!station_needs_metadata(&track));
+    }
+
+    #[test]
+    fn station_pages_preserve_order_and_metadata_without_playlist_queries() {
+        let body = json!({"pages":[{"tracks":[
+            {"uri":"spotify:track:a","metadata":{"title":"First","artist_name":"Artist","artist_uri":"spotify:artist:one","album_title":"Album","album_uri":"spotify:album:one","duration":"123000","image_url":"https://i.scdn.co/image/a"}},
+            {"gid":"AAAAAAAAAAAAAAAAAAAAAQ==","metadata":{"title":"Second"}},
+            {"uri":"spotify:track:a"},
+            {"uri":"spotify:episode:not-a-song"}
+        ]}]});
+        let tracks = station_tracks(&body, 50).unwrap();
+        assert_eq!(tracks.len(), 2);
+        assert_eq!(tracks[0].uri, "spotify:track:a");
+        assert_eq!(tracks[0].name, "First");
+        assert_eq!(tracks[0].duration_ms, Some(123000));
+        assert_eq!(tracks[0].raw["artists"][0]["name"], "Artist");
+        assert_eq!(tracks[1].uri, "spotify:track:0000000000000000000001");
+        assert_eq!(station_tracks(&body, 1).unwrap().len(), 1);
+        assert!(station_tracks(&json!({}), 50).is_err());
+        assert!(station_tracks(&json!({"pages":[{"page_url":"not-followed"}]}), 50).is_err());
+        assert!(context_track_uri(&json!({"gid":"invalid"})).is_none());
+    }
+
     #[test]
     fn suggestions_only_return_autocomplete_text() {
         let body = json!({"data":{"searchV2":{"topResultsV2":{"itemsV2":[

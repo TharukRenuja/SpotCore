@@ -7,6 +7,7 @@ use spotcore_core::Error;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
 
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 struct Recipe {
     key: Vec<u8>,
     version: u32,
@@ -108,15 +109,81 @@ impl Recipe {
         Ok(format!("{:06}", value % 1_000_000))
     }
 }
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+struct Bootstrap {
+    recipe: Recipe,
+    app_version: String,
+    build_version: String,
+    checked_at_ms: u64,
+}
+impl Bootstrap {
+    fn valid(&self, now: u64) -> bool {
+        now.checked_sub(self.checked_at_ms)
+            .is_some_and(|age| age < 24 * 60 * 60 * 1000)
+            && self.recipe.version > 0
+            && !self.recipe.key.is_empty()
+            && self.recipe.key.len() <= 1024
+            && self.recipe.key.iter().all(u8::is_ascii_digit)
+            && !self.app_version.is_empty()
+            && self.app_version.len() <= 128
+            && !self.build_version.is_empty()
+            && self.build_version.len() <= 256
+    }
+}
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}
+async fn read_bootstrap(path: std::path::PathBuf) -> Option<Bootstrap> {
+    tokio::task::spawn_blocking(move || {
+        if std::fs::metadata(&path).ok()?.len() > 8192 {
+            return None;
+        }
+        use std::io::Read;
+        let mut bytes = Vec::new();
+        std::fs::File::open(path)
+            .ok()?
+            .take(8193)
+            .read_to_end(&mut bytes)
+            .ok()?;
+        if bytes.len() > 8192 {
+            return None;
+        }
+        let value: Bootstrap = serde_json::from_slice(&bytes).ok()?;
+        value.valid(now_ms()).then_some(value)
+    })
+    .await
+    .ok()
+    .flatten()
+}
+async fn write_bootstrap(path: std::path::PathBuf, value: Bootstrap) {
+    let _ = tokio::task::spawn_blocking(move || -> std::io::Result<()> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let bytes = serde_json::to_vec(&value)?;
+        let temporary = path.with_extension(format!("{}.tmp", uuid::Uuid::new_v4()));
+        let result =
+            std::fs::write(&temporary, bytes).and_then(|()| std::fs::rename(&temporary, &path));
+        if result.is_err() {
+            let _ = std::fs::remove_file(temporary);
+        }
+        result
+    })
+    .await;
+}
 #[derive(Default)]
 struct State {
     session: Option<WebSession>,
-    recipe: Option<(Recipe, String, String)>,
+    recipe: Option<Bootstrap>,
 }
 pub(crate) struct CookieSession {
     cookie: String,
     client: reqwest::Client,
     state: Mutex<State>,
+    cache: Option<std::path::PathBuf>,
 }
 impl CookieSession {
     pub(crate) fn new(cookie: String) -> Result<Self, Error> {
@@ -135,7 +202,36 @@ impl CookieSession {
             cookie,
             client,
             state: Mutex::new(State::default()),
+            cache: None,
         })
+    }
+    pub(crate) fn with_credentials(
+        credentials: spotcore_auth::WebCredentials,
+        cache: std::path::PathBuf,
+    ) -> Result<Self, Error> {
+        let mut auth = Self::new(credentials.sp_dc.clone().ok_or(Error::NotAuthenticated)?)?;
+        let session = match (&credentials.access_token, credentials.expires_at_ms, &credentials.client_id, &credentials.app_version) {
+            (Some(token), Some(expires), Some(client), Some(version)) if !client.is_empty() && !version.is_empty() =>
+                serde_json::from_value(json!({"accessToken":token,"expiresAtMs":expires,"clientId":client,"appVersion":version,"isAnonymous":false})).ok(),
+            _ => None,
+        };
+        auth.state = Mutex::new(State {
+            session,
+            recipe: None,
+        });
+        auth.cache = Some(cache);
+        Ok(auth)
+    }
+    pub(crate) async fn credentials(&self) -> spotcore_auth::WebCredentials {
+        let state = self.state.lock().await;
+        let session = state.session.as_ref();
+        spotcore_auth::WebCredentials {
+            sp_dc: Some(self.cookie.clone()),
+            access_token: session.map(|s| s.access_token.expose().to_owned()),
+            expires_at_ms: session.map(|s| s.expires_at_ms),
+            client_id: session.map(|s| s.client_id.clone()),
+            app_version: session.map(|s| s.app_version.clone()),
+        }
     }
     async fn issue(&self, recipe: &Recipe, app_version: &str) -> Result<WebSession, Error> {
         let response = self
@@ -192,8 +288,16 @@ impl CookieSession {
         }
         Ok(session)
     }
-    pub(crate) async fn invalidate(&self) {
-        self.state.lock().await.session = None;
+    pub(crate) async fn invalidate(&self, rejected: &str) {
+        let mut state = self.state.lock().await;
+        // A late rejection must not discard a token another shared request already renewed.
+        if state
+            .session
+            .as_ref()
+            .is_some_and(|session| session.access_token.expose() == rejected)
+        {
+            state.session = None;
+        }
     }
     pub(crate) async fn session(&self) -> Result<WebSession, Error> {
         let mut state = self.state.lock().await;
@@ -208,26 +312,37 @@ impl CookieSession {
         {
             return Ok(session.clone());
         }
+        if state
+            .recipe
+            .as_ref()
+            .is_none_or(|value| !value.valid(now_ms()))
+        {
+            state.recipe = match &self.cache {
+                Some(path) => read_bootstrap(path.clone()).await,
+                None => None,
+            };
+        }
         for attempt in 0..2 {
-            let assets = PlayerAssets::load().await?;
-            if state
-                .recipe
-                .as_ref()
-                .is_none_or(|(_, _, build)| build != &assets.build_version)
-            {
-                state.recipe = Some((
-                    Recipe::parse(&assets.main_script().await?)?,
-                    assets.client_version,
-                    assets.build_version,
-                ));
+            if state.recipe.is_none() {
+                let assets = PlayerAssets::load().await?;
+                let value = Bootstrap {
+                    recipe: Recipe::parse(&assets.main_script().await?)?,
+                    app_version: assets.client_version,
+                    build_version: assets.build_version,
+                    checked_at_ms: now_ms(),
+                };
+                state.recipe = Some(value);
             }
-            let (recipe, version, _) = state
+            let bootstrap = state
                 .recipe
                 .as_ref()
                 .ok_or_else(|| Error::Backend("missing token recipe".into()))?;
-            match self.issue(recipe, version).await {
+            match self.issue(&bootstrap.recipe, &bootstrap.app_version).await {
                 Ok(session) => {
                     state.session = Some(session.clone());
+                    if let (Some(path), Some(bootstrap)) = (&self.cache, state.recipe.as_ref()) {
+                        write_bootstrap(path.clone(), bootstrap.clone()).await;
+                    }
                     return Ok(session);
                 }
                 Err(Error::Http { status: 400, .. }) if attempt == 0 => {
@@ -242,6 +357,61 @@ impl CookieSession {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn saved_credentials() -> spotcore_auth::WebCredentials {
+        spotcore_auth::WebCredentials {
+            sp_dc: Some("fixture-cookie".into()),
+            access_token: Some("fixture-token".into()),
+            expires_at_ms: Some(now_ms() + 3_600_000),
+            client_id: Some("fixture-client".into()),
+            app_version: Some("fixture-version".into()),
+        }
+    }
+
+    #[tokio::test]
+    async fn valid_saved_token_needs_no_bootstrap_or_network() {
+        let auth = CookieSession::with_credentials(
+            saved_credentials(),
+            std::path::PathBuf::from("unused-bootstrap.json"),
+        )
+        .unwrap();
+        let session = auth.session().await.unwrap();
+        assert_eq!(session.access_token.expose(), "fixture-token");
+        let credentials = auth.credentials().await;
+        assert_eq!(credentials.client_id.as_deref(), Some("fixture-client"));
+        auth.invalidate("older-token").await;
+        assert!(auth.credentials().await.access_token.is_some());
+        auth.invalidate("fixture-token").await;
+        assert!(auth.credentials().await.access_token.is_none());
+    }
+
+    #[tokio::test]
+    async fn bootstrap_cache_rejects_stale_corrupt_and_future_records() {
+        let directory =
+            std::env::temp_dir().join(format!("spotcore-bootstrap-{}", uuid::Uuid::new_v4()));
+        let path = directory.join("bootstrap.json");
+        let mut value = Bootstrap {
+            recipe: Recipe {
+                key: b"1234".to_vec(),
+                version: 1,
+            },
+            app_version: "version".into(),
+            build_version: "build".into(),
+            checked_at_ms: now_ms(),
+        };
+        write_bootstrap(path.clone(), value.clone()).await;
+        assert!(read_bootstrap(path.clone()).await.is_some());
+        value.checked_at_ms = now_ms() - 86_400_001;
+        write_bootstrap(path.clone(), value.clone()).await;
+        assert!(read_bootstrap(path.clone()).await.is_none());
+        value.checked_at_ms = now_ms() + 60_000;
+        write_bootstrap(path.clone(), value).await;
+        assert!(read_bootstrap(path.clone()).await.is_none());
+        std::fs::write(&path, b"broken").unwrap();
+        assert!(read_bootstrap(path).await.is_none());
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
     #[tokio::test]
     #[ignore = "requires a private Free-account cookie file"]
     async fn free_cookie_acquires_and_renews_without_browser() {

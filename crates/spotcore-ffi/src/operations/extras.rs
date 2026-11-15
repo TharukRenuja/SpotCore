@@ -54,6 +54,15 @@ pub(super) async fn call(
             let p: Args = parse(arguments)?;
             encode(sdk.extras().lyrics(&p.value).await?)
         }
+        "prerelease" => {
+            #[derive(serde::Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Args {
+                value: String,
+            }
+            let p: Args = parse(arguments)?;
+            encode(sdk.extras().prerelease(&p.value).await?)
+        }
         "radio" => {
             #[derive(serde::Deserialize)]
             #[serde(deny_unknown_fields)]
@@ -62,6 +71,16 @@ pub(super) async fn call(
             }
             let p: Args = parse(arguments)?;
             encode(sdk.extras().radio(&p.value).await?)
+        }
+        "radio_tracks" => {
+            #[derive(serde::Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Args {
+                seed: String,
+                limit: u32,
+            }
+            let p: Args = parse(arguments)?;
+            encode(sdk.extras().radio_tracks(&p.seed, p.limit).await?)
         }
         "radio_uri" => {
             #[derive(serde::Deserialize)]

@@ -255,11 +255,13 @@ int main(int argc, char **argv) {
     if (qEnvironmentVariableIsEmpty("QT_OPENGL")) qputenv("QT_OPENGL", "software");
     if (qEnvironmentVariableIsEmpty("QT_QPA_OFFSCREEN_NO_GLX")) qputenv("QT_QPA_OFFSCREEN_NO_GLX", "1");
 
+    const QString applicationName = qEnvironmentVariable("SPOTCORE_APP_NAME", "SpotCore");
 #if defined(__linux__)
-    prctl(PR_SET_NAME, "spotcore-engine", 0, 0, 0);
+    const QByteArray processName = applicationName.toUtf8();
+    prctl(PR_SET_NAME, processName.constData(), 0, 0, 0);
 #endif
     QApplication app(argc, argv);
-    app.setApplicationName("spotcore-engine");
+    app.setApplicationName(applicationName);
     QCommandLineParser parser;
     parser.setApplicationDescription(
         "SpotCore playback engine: a signed-in, hidden Spotify page controlled over CDP.");
@@ -383,9 +385,7 @@ int main(int argc, char **argv) {
 
     QWebEngineView window;
     if (login) {
-        window.setWindowTitle("Spotify");
-        QObject::connect(&page, &QWebEnginePage::titleChanged, &window,
-            &QWidget::setWindowTitle);
+        window.setWindowTitle(applicationName);
         window.resize(1024, 768);
         window.setPage(&page);
         window.show();

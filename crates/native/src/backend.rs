@@ -21,6 +21,7 @@ pub struct SoloistBackend {
     active: watch::Receiver<bool>,
     /// Connect device name passed to `launch_as`; `None` for a direct `connect`.
     device_name: Option<String>,
+    device_id: Option<String>,
     _process: Option<SoloistProcess>,
     binary_lease: Option<std::fs::File>,
     reader_task: tokio::task::JoinHandle<()>,
@@ -82,6 +83,40 @@ impl SoloistBackend {
         Ok(backend)
     }
 
+    /// Runs the daemon once in pairing mode so the official Spotify app can
+    /// provision this device; the session it stores is reused by `launch_as`.
+    pub async fn pair_with(
+        api_key: impl Into<String>,
+        paths: &spotcore_core::paths::Paths,
+        device_name: impl Into<String>,
+        timeout: std::time::Duration,
+    ) -> Result<(), Error> {
+        let paths = paths.resolve()?;
+        let device_name = device_name.into().trim().to_string();
+        if device_name.is_empty() {
+            return Err(Error::InvalidInput("connect device name must not be empty"));
+        }
+        let api_key = api_key.into();
+        if api_key.trim().is_empty() {
+            return Err(Error::InvalidInput("native API key is empty"));
+        }
+        paths
+            .prepare()
+            .map_err(|error| Error::Backend(format!("cannot prepare native data root: {error}")))?;
+
+        let manager = SoloistManager::new(paths.native());
+        let (binary_path, _lease) = manager
+            .acquire_binary()
+            .await
+            .map_err(|e| Error::Backend(format!("Failed to prepare Soloist binary: {}", e)))?;
+
+        let mut config = SoloistConfig::new(binary_path, api_key, &paths);
+        config.device_name = device_name;
+        SoloistProcess::pair(&config, timeout)
+            .await
+            .map_err(|e| Error::Backend(format!("Failed to pair Soloist: {}", e)))
+    }
+
     /// Waits for the owned daemon to exit before releasing its executable lease.
     pub async fn shutdown(&mut self) -> Result<(), Error> {
         if let Some(process) = &mut self._process {
@@ -95,6 +130,15 @@ impl SoloistBackend {
         self.reader_task.abort();
         self.writer_task.abort();
         Ok(())
+    }
+
+    /// Binds the account-verified Connect identity after registration.
+    pub fn bind_device_id(&mut self, id: String) {
+        self.device_id = Some(id);
+    }
+
+    pub fn device_id(&self) -> Option<&str> {
+        self.device_id.as_deref()
     }
 
     /// The Connect device name the daemon was launched with, when known.
@@ -166,13 +210,18 @@ impl SoloistBackend {
                                 "paused" => PlaybackState::Paused,
                                 _ => PlaybackState::Idle,
                             };
-                            {
+                            let snapshot = {
                                 let mut lock = snapshot_clone.write().await;
                                 if let Some(ref mut snap) = *lock {
                                     snap.state = new_state;
                                 }
-                            }
-                            let _ = event_tx.send(PlaybackEvent::StateChanged(new_state)).await;
+                                lock.clone()
+                            };
+                            let event = snapshot
+                                .map_or(PlaybackEvent::StateChanged(new_state), |snapshot| {
+                                    PlaybackEvent::Snapshot(Box::new(snapshot))
+                                });
+                            let _ = event_tx.send(event).await;
                         }
                         SoloistServerEvent::TrackChanged(t) => {
                             if let Some(ref item) = t.item
@@ -187,10 +236,10 @@ impl SoloistBackend {
                                     } else {
                                         let snap = PlayerSnapshot {
                                             state: PlaybackState::Idle,
+                                            duration_ms: media_item.duration_ms,
                                             track: Some(media_item),
                                             context_uri: None,
                                             position_ms: 0,
-                                            duration_ms: None,
                                             timestamp_ms: None,
                                             device_id: None,
                                             device_name: None,
@@ -232,6 +281,14 @@ impl SoloistBackend {
                             }
                             let _ = event_tx.send(PlaybackEvent::SessionChanged).await;
                         }
+                        SoloistServerEvent::Queue(_) => {
+                            let _ = event_tx.send(PlaybackEvent::QueueInvalidated).await;
+                        }
+                        SoloistServerEvent::ContextChanged(_)
+                        | SoloistServerEvent::OptionsChanged(_) => {
+                            let _ = activate_tx.send(CommandPayload::get_state()).await;
+                            let _ = event_tx.send(PlaybackEvent::QueueInvalidated).await;
+                        }
                         SoloistServerEvent::DeviceChanged(e) => {
                             if let Some(v) = e.is_active {
                                 let _ = active_tx.send(v);
@@ -253,18 +310,22 @@ impl SoloistBackend {
             logged_in: logged_in_rx,
             active: active_rx,
             device_name: None,
+            device_id: None,
             _process: None,
             binary_lease: None,
             reader_task,
             writer_task,
         };
 
-        // A socket can open before the daemon finishes signing in.
-        let _ = backend
-            .wait_authenticated(std::time::Duration::from_secs(10))
-            .await;
-
         Ok(backend)
+    }
+
+    /// A live control socket is not proof that the daemon has authenticated.
+    pub fn authentication_state(&self) -> Result<bool, Error> {
+        self.logged_in
+            .has_changed()
+            .map_err(|_| Error::Disconnected)?;
+        Ok(*self.logged_in.borrow())
     }
 
     /// Waits until the daemon confirms login authentication, up to `dur`.
@@ -310,7 +371,11 @@ impl SoloistBackend {
     }
 
     pub async fn current_snapshot(&self) -> Option<PlayerSnapshot> {
-        self.snapshot.read().await.clone()
+        self.snapshot.read().await.clone().map(|mut snapshot| {
+            snapshot.device_id = self.device_id.clone();
+            snapshot.device_name = self.device_name.clone();
+            snapshot
+        })
     }
 
     fn default_capabilities() -> Capabilities {
@@ -349,7 +414,11 @@ impl SoloistBackend {
             .map(|arr| {
                 arr.iter()
                     .filter_map(|img| {
-                        let url = img.get("url")?.as_str()?.to_string();
+                        let url = img.get("url")?.as_str()?.trim();
+                        if url.is_empty() {
+                            return None;
+                        }
+                        let url = url.to_owned();
                         Some(Image {
                             url,
                             width: None,
@@ -361,14 +430,20 @@ impl SoloistBackend {
             .unwrap_or_default();
 
         let duration_ms = item
-            .pointer("/playback/duration_ms")
+            .pointer("/decorations/playback/duration_ms")
+            .or_else(|| item.pointer("/playback/duration_ms"))
             .or_else(|| item.get("duration_ms"))
             .and_then(|v| v.as_u64());
 
+        let kind = match uri.split(':').nth(1) {
+            Some("episode") => MediaKind::Episode,
+            Some("ad") => MediaKind::Ad,
+            _ => MediaKind::Track,
+        };
         Some(MediaItem {
             uri,
             name,
-            kind: MediaKind::Track,
+            kind,
             images,
             duration_ms,
             uid: None,
@@ -401,19 +476,24 @@ impl SoloistBackend {
         PlayerSnapshot {
             state,
             track,
-            context_uri: None,
+            context_uri: ev
+                .context
+                .as_ref()
+                .and_then(|context| context.get("uri"))
+                .and_then(|uri| uri.as_str())
+                .map(str::to_owned),
             position_ms,
             duration_ms,
             timestamp_ms,
             device_id: None,
             device_name: None,
-            volume: None,
+            volume: ev.volume.map(|volume| f64::from(volume.min(100)) / 100.0),
             buffering,
             shuffle,
             smart_shuffle: None,
             repeat,
             capabilities,
-            raw: serde_json::Value::Null,
+            raw: serde_json::json!({"speed": ev.position.as_ref().map(|position| position.speed)}),
         }
     }
 }
@@ -511,6 +591,30 @@ mod tests {
     use super::*;
 
     #[test]
+    fn decorated_native_state_keeps_duration_context_volume_and_position() {
+        let event: PlaybackStateEvent = serde_json::from_value(serde_json::json!({
+            "status":"playing", "position":{"position_ms":71965,"timestamp_ms":1000,"speed":1},
+            "volume":35, "context":{"uri":"spotify:playlist:context"},
+            "item":{"uri":"spotify:episode:item","decorations":{
+                "identity":{"name":"Episode"},"playback":{"duration_ms":179437},
+                "visual_identity":{"cover":[{"url":"https://example.com/cover"}]}
+            }}
+        }))
+        .unwrap();
+        let snapshot = SoloistBackend::map_snapshot(&event);
+        assert_eq!(snapshot.duration_ms, Some(179437));
+        assert_eq!(snapshot.position_ms, 71965);
+        assert_eq!(
+            snapshot.context_uri.as_deref(),
+            Some("spotify:playlist:context")
+        );
+        assert_eq!(snapshot.volume, Some(0.35));
+        assert_eq!(snapshot.raw["speed"].as_f64(), Some(1.0));
+        assert_eq!(snapshot.track.as_ref().unwrap().kind, MediaKind::Episode);
+        assert_eq!(snapshot.track.as_ref().unwrap().images.len(), 1);
+    }
+
+    #[test]
     fn partial_auth_events_preserve_login_but_explicit_logout_clears_it() {
         let (sender, state) = watch::channel(false);
         assert_eq!(
@@ -548,5 +652,49 @@ mod tests {
             spotcore_core::paths::Paths::new(std::env::temp_dir().join("spotcore_blank_name"));
         let result = SoloistBackend::launch_as("key", &paths, "   ").await;
         assert!(matches!(result, Err(Error::InvalidInput(_))));
+    }
+
+    #[tokio::test]
+    async fn native_queue_notifications_invalidate_http_queue() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("ws://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+            socket
+                .send(Message::Text(
+                    r#"{"type":"queue_changed","upcoming":[]}"#.into(),
+                ))
+                .await
+                .unwrap();
+            socket.close(None).await.unwrap();
+        });
+        let mut backend = SoloistBackend::connect(&endpoint).await.unwrap();
+        let event = tokio::time::timeout(std::time::Duration::from_secs(1), backend.next_event())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(matches!(event, PlaybackEvent::QueueInvalidated));
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn closed_socket_is_not_reported_as_missing_authentication() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("ws://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+            socket.close(None).await.unwrap();
+        });
+        let backend = SoloistBackend::connect(&endpoint).await.unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            while backend.authentication_state() != Err(Error::Disconnected) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        server.await.unwrap();
     }
 }

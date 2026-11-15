@@ -2,8 +2,8 @@
 use super::{empty, encode, parse};
 use crate::BindingError;
 use serde_json::Value;
-use spotcore::AudioQuality;
 use spotcore::web::Device;
+use spotcore::{AudioQuality, QueueItem};
 
 pub(super) async fn call(
     sdk: &mut spotcore::SpotCore,
@@ -20,13 +20,90 @@ pub(super) async fn call(
             let p: Args = parse(arguments)?;
             encode(sdk.devices().audio_quality(&p.device).await?)
         }
+        "edit_queue_occurrence" => {
+            #[derive(serde::Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Args {
+                device: String,
+                item: QueueItem,
+                before: Option<QueueItem>,
+                after: Option<QueueItem>,
+                manual: Option<bool>,
+            }
+            let p: Args = parse(arguments)?;
+            encode(
+                sdk.devices()
+                    .edit_queue_occurrence(&p.device, p.item, p.before, p.after, p.manual)
+                    .await?,
+            )
+        }
+        "insert_queue_items" => {
+            #[derive(serde::Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Args {
+                device: String,
+                uris: Vec<String>,
+                before: Option<QueueItem>,
+                after: Option<QueueItem>,
+                manual: bool,
+            }
+            let p: Args = parse(arguments)?;
+            encode(
+                sdk.devices()
+                    .insert_queue_items(&p.device, &p.uris, p.before, p.after, p.manual)
+                    .await?,
+            )
+        }
         "list" => {
             empty(arguments)?;
             encode(sdk.devices().list().await?)
         }
+        "play_items" => {
+            #[derive(serde::Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Args {
+                target: Option<String>,
+                context: Option<String>,
+                uris: Vec<String>,
+                position: std::time::Duration,
+            }
+            let p: Args = parse(arguments)?;
+            encode(
+                sdk.devices()
+                    .play_items(
+                        p.target.as_deref(),
+                        p.context.as_deref(),
+                        &p.uris,
+                        p.position,
+                    )
+                    .await?,
+            )
+        }
+        "playback_state" => {
+            empty(arguments)?;
+            encode(sdk.devices().playback_state().await?)
+        }
         "pull_here" => {
             empty(arguments)?;
             encode(sdk.devices().pull_here().await?)
+        }
+        "queue" => {
+            empty(arguments)?;
+            encode(sdk.devices().queue().await?)
+        }
+        "queue_snapshot" => {
+            empty(arguments)?;
+            encode(sdk.devices().queue_snapshot().await?)
+        }
+        "replace_queued" => {
+            #[derive(serde::Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Args {
+                device: String,
+                uris: Vec<String>,
+            }
+            let p: Args = parse(arguments)?;
+            encode(sdk.devices().replace_queued(&p.device, &p.uris).await?)
         }
         "set_audio_quality" => {
             #[derive(serde::Deserialize)]

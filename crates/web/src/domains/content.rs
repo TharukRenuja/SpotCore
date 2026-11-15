@@ -141,6 +141,20 @@ impl Catalog<'_> {
             "/data/trackUnion",
         )
     }
+    /// Full album page, including per-row metadata and unavailable positions.
+    pub async fn album_page(&self, value: &str, paging: Paging) -> Result<Value, Error> {
+        uri(value)?;
+        if !value.starts_with("spotify:album:") {
+            return Err(Error::InvalidInput("expected album URI"));
+        }
+        paging.validate()?;
+        self.0
+            .gql(
+                "getAlbum",
+                json!({"uri":value,"locale":"","offset":paging.offset,"limit":paging.limit}),
+            )
+            .await
+    }
     pub async fn album(&self, value: &str) -> Result<MediaItem, Error> {
         uri(value)?;
         entity(
@@ -181,7 +195,7 @@ impl Catalog<'_> {
         self.0
             .gql(
                 "queryArtistOverview",
-                json!({"uri":value,"locale":"","preReleaseV2":false}),
+                json!({"uri":value,"locale":"","preReleaseV2":true}),
             )
             .await
     }
@@ -231,15 +245,7 @@ impl Catalog<'_> {
         let seeds = radio_seeds(seed_tracks, seed_artists, limit)?;
         let mut radios = Vec::new();
         for seed in seeds {
-            if let Some(uri) = self.0.extras().radio_uri(&seed).await? {
-                radios.push(
-                    self.0
-                        .playlists()
-                        .tracks(&uri, Paging { offset: 0, limit })
-                        .await?
-                        .items,
-                );
-            }
+            radios.push(self.0.extras().radio_tracks(&seed, limit).await?);
         }
         Ok(blend_radios(radios, seed_tracks, limit as usize))
     }
@@ -418,7 +424,9 @@ impl Home<'_> {
                 json!({"uri":value,"timeZone":timezone,"sp_t":"","sectionItemsLimit":paging.limit,"sectionItemsOffset":paging.offset,"homeEndUserIntegration":"INTEGRATION_WEB_PLAYER","includeEpisodeContentRatingsV2":true}),
             )
             .await?;
-        home_section(&body, paging)
+        let mut page = home_section(&body, paging)?;
+        super::social::hydrate_media(self.0, page.items.iter_mut().collect()).await;
+        Ok(page)
     }
     /// Made For You. The section URI is Spotify's; it is not account-specific.
     pub async fn made_for_you(
