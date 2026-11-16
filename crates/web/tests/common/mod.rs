@@ -58,7 +58,11 @@ impl MockBrowser {
         let http_task = tokio::spawn(async move {
             while let Ok((mut stream, _)) = http.accept().await {
                 let mut buffer = [0; 4096];
-                let _ = stream.read(&mut buffer).await;
+                let read = stream
+                    .read(&mut buffer)
+                    .await
+                    .expect("client sent a request");
+                assert!(read > 0, "client sent an empty request");
                 let body=json!([{"id":"spotify","type":"page","url":"https://open.spotify.com/","webSocketDebuggerUrl":ws_url}]).to_string();
                 let response = format!(
                     "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",

@@ -1537,7 +1537,11 @@ mod tests {
         tokio::spawn(async move {
             let (mut stream, _) = http.accept().await.unwrap();
             let mut buffer = [0; 4096];
-            stream.read(&mut buffer).await.unwrap();
+            let read = stream
+                .read(&mut buffer)
+                .await
+                .expect("client sent a request");
+            assert!(read > 0, "client sent an empty request");
             let body = serde_json::json!([{"id":"login","type":"page","url":"https://accounts.spotify.com/login","webSocketDebuggerUrl":websocket}]).to_string();
             let response = format!(
                 "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
@@ -2107,7 +2111,8 @@ mod tests {
             let server = tokio::spawn(async move {
                 let (mut socket, _) = listener.accept().await.unwrap();
                 let mut buf = [0u8; 1024];
-                let _ = socket.read(&mut buf).await;
+                let read = socket.read(&mut buf).await.expect("client sent a request");
+                assert!(read > 0, "client sent an empty request");
                 let response = format!(
                     "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
                     body.len()
