@@ -19,7 +19,6 @@ license = "GPL-3.0-only"
 [workspace.dependencies]
 spotcore-core = { path = "crates/core" }
 spotcore-auth = { path = "crates/auth" }
-spotcore-native = { path = "crates/native" }
 
 [features]
 default = ["web"]

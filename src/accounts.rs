@@ -6,7 +6,7 @@ use std::path::Path;
 pub struct AccountManager {
     paths: Paths,
     store: AccountStore,
-    active: Option<(String, SpotCore, File)>,
+    active: Option<(String, SpotCore, SessionLease)>,
     web_options: crate::WebPlayerOptions,
     role: crate::BrowserRole,
     engine: crate::BrowserEngine,
@@ -15,6 +15,21 @@ pub struct AccountManager {
     prefer_native: bool,
     #[cfg(feature = "native")]
     allow_native_pairing: bool,
+}
+
+struct SessionLease(File);
+
+impl Drop for SessionLease {
+    fn drop(&mut self) {
+        // A forked child can retain the descriptor until exec, so closing alone can leave it locked.
+        if let Err(error) = self.0.unlock() {
+            use std::io::Write;
+            let _ = writeln!(
+                std::io::stderr(),
+                "could not release account session lock: {error}"
+            );
+        }
+    }
 }
 
 impl AccountManager {
@@ -366,7 +381,7 @@ impl AccountManager {
         .await
     }
 
-    fn lease(&self, id: &str) -> Result<(Paths, File), Error> {
+    fn lease(&self, id: &str) -> Result<(Paths, SessionLease), Error> {
         let key = spotcore_auth::account_key(id).map_err(storage_error)?;
         self.paths.prepare().map_err(storage_error)?;
         let sessions = self.paths.root().join("sessions");
@@ -383,6 +398,7 @@ impl AccountManager {
             .map_err(storage_error)?;
         lock.try_lock()
             .map_err(|_| Error::Backend("account session is already in use".into()))?;
+        let lock = SessionLease(lock);
         let paths = Paths::new(sessions.join(key));
         reject_symlink(paths.root())?;
         paths.prepare().map_err(storage_error)?;
@@ -500,6 +516,22 @@ mod tests {
         let recovered = login_profile(&store, "user").unwrap();
         assert_eq!(recovered.canonical_username, "user");
         assert!(recovered.soloist.is_none());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn releasing_a_session_unlocks_descriptors_retained_by_a_child() {
+        let root =
+            std::env::temp_dir().join(format!("spotcore-retained-lock-{}", std::process::id()));
+        let manager = AccountManager::new(Paths::new(&root)).unwrap();
+        let (_, lease) = manager.lease("one").unwrap();
+        let retained = lease.0.try_clone().unwrap();
+        assert!(manager.lease("one").is_err());
+        drop(lease);
+        let (_, next) = manager.lease("one").unwrap();
+        drop(next);
+        drop(retained);
         fs::remove_dir_all(root).unwrap();
     }
 

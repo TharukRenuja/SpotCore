@@ -804,13 +804,14 @@ mod tests {
                 .any(|(_, args)| args["service"] == "ConnectTransferAPI")
         );
         sdk.activate_local().await.unwrap();
-        let calls = browser.calls.lock().unwrap();
-        let (_, args) = calls
-            .iter()
-            .find(|(_, args)| args["service"] == "ConnectTransferAPI")
-            .unwrap();
-        assert_eq!(args["args"], json!(["owned-web", {"playOnTransfer":false}]));
-        drop(calls);
+        {
+            let calls = browser.calls.lock().unwrap();
+            let (_, args) = calls
+                .iter()
+                .find(|(_, args)| args["service"] == "ConnectTransferAPI")
+                .unwrap();
+            assert_eq!(args["args"], json!(["owned-web", {"playOnTransfer":false}]));
+        }
         assert!(sdk.local_device().await.unwrap().unwrap().active);
         browser.response.lock().unwrap()["devices"]
             .as_array_mut()

@@ -3213,7 +3213,6 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
- "spotcore-auth",
  "spotcore-core",
  "tar",
  "thiserror 2.0.21",

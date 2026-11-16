@@ -38,15 +38,16 @@ jobs:
     env:
       SPOTCORE_LAUNCHER: ${{ github.workspace }}/target/debug/spotcore-engine${{ matrix.os == 'windows-latest' && '.exe' || '' }}
     steps:
-      - uses: actions/checkout@v4
+      - run: git config --global init.defaultBranch main
+      - uses: actions/checkout@v7.0.1
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7.1.0
         with:
           python-version: '3.13'
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7.1.0
         with:
           node-version: '22'
       - run: cargo fmt --all --check
@@ -68,7 +69,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - run: git config --global init.defaultBranch main
+      - uses: actions/checkout@v7.0.1
       - uses: dtolnay/rust-toolchain@1.89.0
       - uses: Swatinem/rust-cache@v2
       - run: cargo check -p spotcore --all-features --examples --locked
@@ -85,7 +87,8 @@ jobs:
     env:
       ENGINE: target/debug/spotcore-system-engine${{ matrix.os == 'windows-latest' && '.exe' || '' }}
     steps:
-      - uses: actions/checkout@v4
+      - run: git config --global init.defaultBranch main
+      - uses: actions/checkout@v7.0.1
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
