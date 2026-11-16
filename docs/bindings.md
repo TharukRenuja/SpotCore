@@ -1,31 +1,31 @@
 # Language bindings
 
-Pick the language that fits your app—the Spotify logic still runs in the same Rust SDK. The shared FFI layer lives in `crates/spotcore-ffi`, with language wrappers, tests and examples under `bindings/`. The layout follows UniLyrics’ separation of core, FFI, wrappers and scripts.
+Use SpotCore from Python, JavaScript/TypeScript, C#, Java, Kotlin, Swift, Dart, C, C++ or Go. **Every binding uses the same Rust SDK** for Spotify services, playback, engine discovery and account checks. The shared interface is in `crates/spotcore-ffi`. Build commands and examples are under `bindings/`.
 
-Local lifecycle checks now cover Python, C#, Java, Kotlin, Swift, experimental Dart, C, C++, Go and native Node.js/TypeScript on Linux. See the [binding matrix and setup](../bindings/README.md) for exact toolchains, generation commands and the remaining language blockers.
+**Build the native library for your deployment OS and architecture.** See the [binding setup](../bindings/README.md) for toolchains and generation commands. Dart support is experimental. Mobile packaging and playback require a compatible host and are not supplied by a language wrapper.
 
-All wrappers expose typed authentication/account/search/playback/event starter methods plus JSON operation access to all current service domains and playback controls. C/C++/Go use a guarded JSON C interface over the shared worker, and Node uses napi-rs; their implementation does not depend on BoltFFI's WASM or limited C generators. The operation reference records the expanded domain coverage. Generated files and local packages are ignored build artifacts; nothing has been published.
+**Typed starter methods** cover authentication, account details, track search, playback and events. **`invoke()` exposes all current service-domain and playback operations** using JSON arguments and results. C, C++ and Go use the guarded C interface. Node uses a native napi-rs addon. Generate the other language interfaces with the pinned BoltFFI version in the build guides.
 
-Engine discovery, account checks, browser requirements and Soloist fallback remain inside SpotCore. Language support does not add Android or iOS playback support. Live checks on a Free account now cover Node and Python on Linux: Home, search, library, liked tracks, playlists, devices, friend activity and track details; save/restore membership and temporary playlist creation/editing/removal; and web playback state, seek, volume, quality, queue operations and shutdown. Python also received a typed playback event. These are sampled operation checks, not live verification of all 171 operations. Audible output was not independently confirmed; the other language wrappers and Windows/macOS still need live checks.
+**Playback requirements are unchanged across languages.** Services-only sessions need credentials but no browser. Local Web audio needs the launcher or embedded supervisor, a compatible browser engine, Widevine and AAC. Native playback needs an eligible Premium account and an opted-in Soloist key. See [engine setup](engines.md) and [playback](playback.md).
 
 ## Session configuration
 
-Create a session, then call `login(cookie, options, native_key)` using the naming conventions of your language wrapper. The cookie is the account's `sp_dc`; `native_key` is optional. The shared `SessionOptions` fields are:
+Create a session, then call `login(cookie, options, native_key)` using the naming conventions of your language wrapper. The cookie is the account's `sp_dc`. `native_key` is optional. The shared `SessionOptions` fields are:
 
 | Field | Meaning |
 | --- | --- |
-| `app_id` | Application storage namespace; letters, digits, `-` and `_ |
+| `app_id` | Application storage namespace. Letters, digits, `-` and `_ |
 | `device_name` | Nonempty Connect name for managed playback |
-| `playback` | `false` for browser-free HTTP services; `true` prepares local playback at login |
-| `data_dir` | Optional writable storage root; omit to use OS discovery |
+| `playback` | `false` for browser-free HTTP services. `true` prepares local playback at login |
+| `data_dir` | Optional writable storage root. Omit to use OS discovery |
 
-Node uses camelCase (`appId`, `deviceName`, `dataDir`); other wrappers follow their generated types. Consult each [language guide](../bindings/README.md) for construction and build commands. A native key is used only when `playback` is true; eligible Premium sessions attempt Soloist, with Web fallback if startup fails. `SessionInfo` returns the account, selected engine and optional fallback reason. This is the selection result, not confirmation of audible output.
+Node uses camelCase (`appId`, `deviceName`, `dataDir`). Other wrappers follow their generated types. Consult each [language guide](../bindings/README.md) for construction and build commands. A native key is used only when `playback` is true. Eligible Premium sessions attempt Soloist, with Web fallback if startup fails. `SessionInfo` returns the account, selected engine and optional fallback reason. This is the selection result, not confirmation of audible output.
 
 The bindings expose session options rather than every Rust builder setter. Custom browser/CDM executable paths use the documented [environment overrides](configuration.md#environment-overrides). Apps retain ownership of credential storage and should explicitly shut down sessions before switching accounts or exiting.
 
 ## Service and playback operations
 
-Every language also exposes the complete current service-domain and playback operation inventory through `invoke`. This complements the typed starter methods; its arguments and results use JSON so richer SDK/Spotify fields are preserved. The [operation reference](binding-operations.md) lists every method and argument. This is functional access to those methods, not a promise of fully typed models for every language. SDK restrictions, unsupported methods and account requirements still apply. No mobile playback host is added by a language binding.
+Every language also exposes the complete current service-domain and playback operation inventory through `invoke`. This complements the typed starter methods. Its arguments and results use JSON so richer SDK/Spotify fields are preserved. The [operation reference](binding-operations.md) lists every method and argument. This is functional access to those methods, not a promise of fully typed models for every language. SDK restrictions, unsupported methods and account requirements still apply. No mobile playback host is added by a language binding.
 
 For example, check whether a track is saved (after signing in):
 
@@ -48,7 +48,7 @@ const home = await session.invoke("home.feed_info", {
 await session.invoke("playback.set_quality", { quality: "VeryHigh" });
 ```
 
-Unlike the starter Node DTOs, operation results retain snake_case SDK fields and original Spotify JSON keys. They are typed as `JsonValue`; narrow or validate the specific response in your app.
+Unlike the starter Node DTOs, operation results retain snake_case SDK fields and original Spotify JSON keys. They are typed as `JsonValue`. Narrow or validate the specific response in your app.
 
 ### Go
 
@@ -112,9 +112,9 @@ char *response = spotcore_session_call(session, (const uint8_t *)request, strlen
 /* Inspect ok/result/error, then spotcore_string_free(response). */
 ```
 
-`operations()` returns the operation/argument inventory without login (JSON text for BoltFFI languages, parsed objects for Go/Node, an envelope for C/C++). C callers send `{"op":"operations"}`. Use JSON serializers for cookies, names, descriptions and other user input; never concatenate those values into JSON. Durations in operation arguments are milliseconds; see the reference for enum and queue-item formats. Existing `next_event`/`poll_event` methods handle events.
+`operations()` returns the operation/argument inventory without login (JSON text for BoltFFI languages, parsed objects for Go/Node, an envelope for C/C++). C callers send `{"op":"operations"}`. Use JSON serializers for cookies, names, descriptions and other user input. Never concatenate those values into JSON. Durations in operation arguments are milliseconds. See the reference for enum and queue-item formats. Existing `next_event`/`poll_event` methods handle events.
 
-Sessions still use the existing cookie/options/native-key login and explicit shutdown. Create separate sessions for separate accounts; apps own credential storage. Builder/process-management utilities and Rust `AccountStore` internals are not exposed by this session-operation interface. Operations run sequentially on the session worker, so a slow service call can delay delivery of player events. No calls are automatically retried after ambiguous cancellation.
+Sessions still use the existing cookie/options/native-key login and explicit shutdown. Create separate sessions for separate accounts. Apps own credential storage. Builder/process-management utilities and Rust `AccountStore` internals are not exposed by this session-operation interface. Operations run sequentially on the session worker, so a slow service call can delay delivery of player events. No calls are automatically retried after ambiguous cancellation.
 
 For targeted control, `playback.execute_on` takes the SDK's serialized `Command`:
 
@@ -126,8 +126,8 @@ await session.invoke("playback.seek", { position: 30_000 });
 await session.invoke("playback.set_shuffle_mode", { mode: "Smart" });
 ```
 
-`QueueItem` is `{"uri":"spotify:track:...","uid":"..."}`; take the UID from `playback.queue`, rather than inventing one. For device quality methods, pass a complete device object returned by `devices.list`. `Command` uses Rust's enum serialization, including `{ "secs": 30, "nanos": 0 }` for nested durations; only direct duration parameters use integer milliseconds. Rust `u64` values above JavaScript's safe-integer limit cannot be represented exactly as Node numbers. The JSON request cap is 1 MiB, including cover-image byte arrays.
+`QueueItem` is `{"uri":"spotify:track:...","uid":"..."}`. Take the UID from `playback.queue`, rather than inventing one. For device quality methods, pass a complete device object returned by `devices.list`. `Command` uses Rust's enum serialization, including `{ "secs": 30, "nanos": 0 }` for nested durations. Only direct duration parameters use integer milliseconds. Rust `u64` values above JavaScript's safe-integer limit cannot be represented exactly as Node numbers. The JSON request cap is 1 MiB, including cover-image byte arrays.
 
-For web playback tests, wait for a playing snapshot whose position advances before seeking. Capability values can be incomplete during startup, and command completion does not mean the next snapshot already reflects the change; observe events or poll for the expected state. This mattered in the live Node/Python checks.
+**Wait for playback readiness before sending state-dependent controls.** Observe a playing snapshot with advancing position before seeking. Capabilities can be incomplete during startup. After a command, observe events or poll until the expected state appears.
 
-CI now includes offline Node/TypeScript binding checks on Linux, Windows and macOS, plus FFI/Node MSRV checks. The workflow has been prepared locally; remote platform results are not yet available. No live credentials are used in CI.
+Use the language-specific check commands before distributing a build. Offline checks cover wrapper loading, argument conversion, lifecycle and error handling. **Validate account access, DRM and audio on your target runtime separately.**

@@ -1,8 +1,17 @@
 /*
- * Derived from Myspoti's player-bridge.js, by kota-zo and contributors.
- * https://github.com/kota-zo/myspoti — GPL-3.0-only, see ../../../LICENSE.
- * Adapted for SpotCore with optional minimal UI startup.
+ * SPDX-License-Identifier: GPL-3.0-only
+ *
+ * Derived from Orpheon (formerly Myspoti), by kota-zo and contributors.
+ * Original component: player-bridge.js
+ * https://github.com/kota-zo/Orpheon
+ * Modified for SpotCore, including optional minimal UI startup.
+ *
+ * Retain the upstream attribution and license notices when redistributing.
+ * Distribution of this code or modified versions must comply with GPL v3,
+ * including its corresponding-source requirements.
+ * See https://github.com/TharukRenuja/SpotCore/blob/main/THIRD-PARTY-NOTICES.md.
  */
+
 (() => {
   if (location.origin !== 'https://open.spotify.com') throw new Error('Spotify origin required');
   const serviceOnly = window.__spotcoreServiceOnly === true;

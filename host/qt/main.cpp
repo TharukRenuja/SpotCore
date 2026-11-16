@@ -5,6 +5,7 @@
 #include <QFileInfo>
 #include <QVersionNumber>
 #include <QSysInfo>
+#include <QScreen>
 #include <algorithm>
 #include <QHostAddress>
 #include <QNetworkCookie>
@@ -22,6 +23,9 @@
 #include <QWebEngineView>
 #include <csignal>
 #include <cstdio>
+#include <iostream>
+#include <string>
+#include <thread>
 #if defined(_WIN32)
 #include <windows.h>
 #elif defined(__linux__)
@@ -273,6 +277,7 @@ int main(int argc, char **argv) {
     parser.addOption({"verbose", "Forward the page console to stderr"});
     parser.addOption({"no-cuts", "Disable resource blocking (field debugging only)"});
     parser.addOption({"login", "Show a visible Spotify page to sign in, then exit"});
+    parser.addOption({"verified-login", "Keep sign-in open until the SDK verifies and saves the account"});
     parser.addOption({"parent-pid", "Exit when this parent process disappears", "pid"});
     parser.addOption({"services-only", "Use Spotify services without requiring a local audio decoder"});
     parser.process(app);
@@ -300,7 +305,7 @@ int main(int argc, char **argv) {
 
     g_verbose = parser.isSet("verbose") || login;
 
-    if (!login) {
+    if (!login || parser.isSet("verified-login")) {
         quint16 cdpPort = parser.value("cdp-port").toUShort();
         if (cdpPort == 0) cdpPort = reservePort();
         if (cdpPort == 0) {
@@ -386,16 +391,32 @@ int main(int argc, char **argv) {
     QWebEngineView window;
     if (login) {
         window.setWindowTitle(applicationName);
-        window.resize(1024, 768);
+        window.resize(520, 720);
+        if (QScreen *screen = QGuiApplication::primaryScreen()) {
+            const QRect available = screen->availableGeometry();
+            window.resize(std::min(520, std::max(1, available.width() - 32)),
+                          std::min(720, std::max(1, available.height() - 32)));
+            window.move(available.center() - QPoint(window.width() / 2, window.height() / 2));
+        }
         window.setPage(&page);
         window.show();
-        QObject::connect(profile.cookieStore(), &QWebEngineCookieStore::cookieAdded, &page,
-            [&app](const QNetworkCookie &cookie) {
-                if (cookie.name() == "sp_dc" && cookie.domain().contains("spotify.com")) {
-                    qInfo("Signed in; closing the sign-in window.");
-                    QTimer::singleShot(1500, &app, &QCoreApplication::quit);
+        if (!parser.isSet("verified-login")) {
+            QObject::connect(profile.cookieStore(), &QWebEngineCookieStore::cookieAdded, &page,
+                [&app](const QNetworkCookie &cookie) {
+                    if (cookie.name() == "sp_dc" && cookie.domain() == ".spotify.com") {
+                        qInfo("Signed in; closing the sign-in window.");
+                        QTimer::singleShot(1500, &app, &QCoreApplication::quit);
+                    }
+                });
+        }
+        if (parser.isSet("verified-login")) {
+            std::thread([&app]() {
+                std::string command;
+                if (std::getline(std::cin, command) && command == "complete") {
+                    QMetaObject::invokeMethod(&app, "quit", Qt::QueuedConnection);
                 }
-            });
+            }).detach();
+        }
         profile.cookieStore()->loadAllCookies();
     }
 

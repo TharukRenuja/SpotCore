@@ -27,7 +27,7 @@ New here? Start with the [quickstart](quickstart.md). Already building? Pick the
 
 | Mode | Local audio | Setup |
 | --- | --- | --- |
-| Cookie-backed HTTP services | None; controls existing Connect devices | Cookie + `BrowserRole::Services` |
+| Cookie-backed HTTP services | None. Controls existing Connect devices | Cookie + `BrowserRole::Services` |
 | Web playback | Spotify Web Player | Common launcher, compatible browser engine, Widevine and AAC |
 | Optional native playback | Spotify Soloist | `native` feature, Premium account, API key and downloaded engine |
 
@@ -35,14 +35,14 @@ The unified session routes commands before sending them. It does not replay an a
 
 Each snippet is an independent async function unless noted. Pass in the URIs and credentials from your app. Examples that mutate libraries, playlists or playback are intended to run in response to the corresponding user action.
 
-SpotCore is not published on crates.io. Use a local path as shown in the quickstart; see [installation status](installation.md). The default Cargo feature is `web`; add `native` to enable Soloist integration. Enabling that feature alone does not download or launch Soloist.
+**Start with [installation](installation.md) and the [quickstart](quickstart.md).** Use a source checkout or a published Git tag. The default Cargo feature is `web`. Add `native` to compile Soloist integration, then opt in for each session. Compiling the feature alone does not download or launch Soloist.
 
-For individual method signatures, run `cargo doc -p spotcore --all-features --no-deps --open`. Older experiment reports are local, ignored files and are not required by these guides.
+For individual method signatures, run `cargo doc -p spotcore --all-features --no-deps --open`.
 
 For bug reports, development checks and pull requests, see [Contributing](../CONTRIBUTING.md).
 
 ## How to use the reference
 
-Each domain guide starts with a workflow and continues with method tables. Inputs use Rust types from the public API; `value` means the entity URI for that method, not a URL or display name. `Value` denotes an upstream JSON response. See [models](models.md) for shared identifiers, units and pagination rules. A method being listed means it is implemented, not that every region/account/backend has passed a live test. Feature-specific restrictions remain beside the methods.
+Each domain guide starts with a workflow and continues with method tables. Inputs use Rust types from the public API. `value` means the entity URI for that method, not a URL or display name. `Value` denotes an upstream JSON response. See [models](models.md) for shared identifiers, units and pagination rules. **Check the restrictions beside each method.** Account permissions, region and backend capabilities determine availability.
 
-Use the generated Rust reference for the complete field and low-level type signatures. The written guides explain configuration and behavior, while the reference follows the source API. No report directory is required to use them.
+Use the generated Rust reference for complete field and low-level type signatures. The guides explain configuration, workflows and runtime behaviour.

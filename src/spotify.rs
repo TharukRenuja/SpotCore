@@ -374,6 +374,14 @@ impl SpotCoreBuilder {
         self.launcher.login().await
     }
 
+    /// Verifies login and lets the application save the account before its window closes.
+    pub async fn login_with<T, F>(self, finish: F) -> Result<T, Error>
+    where
+        F: std::ops::AsyncFnOnce(Api) -> Result<T, Error>,
+    {
+        self.launcher.login_with(finish).await
+    }
+
     /// Uses HTTP services and optional native playback without launching a browser.
     pub async fn launch_http(self, api: Api) -> Result<SpotCore, Error> {
         if api.browser().is_ok() {

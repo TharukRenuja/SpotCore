@@ -1,12 +1,12 @@
 # Binding operation reference
 
-Generated from the public service methods and session playback controls. Run `python3 scripts/generate_ffi_operations.py --check` to detect missing adapters.
+**Use `invoke()` for the service and playback operations below.** Arguments and results follow the shared Rust SDK. Regenerate this reference with `python3 scripts/generate_ffi_operations.py` after changing public operations.
 
-Use `invoke(operation, arguments_json)` on a language session. Arguments are a JSON object with the names below. Results retain the Rust SDK's serialized field names; methods returning `Value` retain Spotify's original JSON. Errors use `BindingError`.
+Use `invoke(operation, arguments_json)` on a language session. Arguments are a JSON object with the names below. Results retain the Rust SDK's serialized field names. Methods returning `Value` retain Spotify's original JSON. Errors use `BindingError`.
 
-Direct duration arguments (`position`, `amount`) are integer **milliseconds**. `Command` arguments use the Rust externally tagged enum encoding; a nested `Duration` inside a command is `{"secs":30,"nanos":0}`. Prefer the named seek/rewind/context operations for millisecond arguments. `Paging` is `{"limit":20,"offset":0}`. Optional arguments may be omitted or null. JPEG covers are arrays of byte values, or null to remove a cover. Enum strings use Rust variant names: `Tracks`, `ShortTerm`, `Public`, `VeryHigh`, `Smart`, `Off`, etc. See the category guides for permissions, response types and feature limitations.
+Direct duration arguments (`position`, `amount`) are integer **milliseconds**. `Command` arguments use the Rust externally tagged enum encoding. A nested `Duration` inside a command is `{"secs":30,"nanos":0}`. Prefer the named seek/rewind/context operations for millisecond arguments. `Paging` is `{"limit":20,"offset":0}`. Optional arguments may be omitted or null. JPEG covers are arrays of byte values, or null to remove a cover. Enum strings use Rust variant names: `Tracks`, `ShortTerm`, `Public`, `VeryHigh`, `Smart`, `Off`, etc. See the category guides for permissions, response types and feature limitations.
 
-A listed operation means it is exposed, not that every account supports it. `jam.join` preserves the SDK's current unsupported/unverified behavior. Session creation/login/shutdown and event consumption use the existing lifecycle methods; worker events are not fetched through `invoke`.
+**Account and backend restrictions still apply.** Guest joining through `jam.join` is unsupported. Use the session lifecycle methods for login, shutdown and event consumption. Worker events are not fetched through `invoke`.
 ## Blends
 
 | Operation | Arguments | Result |
@@ -257,3 +257,4 @@ A listed operation means it is exposed, not that every account supports it. `jam
 | `users.set_private_session` | `enabled: bool` | `Value` |
 | `users.top` | `range: TimeRange, limit: u32` | `Value` |
 | `users.unfollow` | `values: Vec<String>` | `Value` |
+| `users.update_profile` | `name: String, image: Option<Vec<u8>>` | `()` |

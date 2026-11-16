@@ -107,7 +107,89 @@ impl TimeRange {
         }
     }
 }
+fn profile_name_update(name: &str) -> Result<Vec<u8>, Error> {
+    if name.trim().is_empty() || name.chars().count() > 32 {
+        return Err(Error::InvalidInput(
+            "profile name must contain 1 to 32 characters",
+        ));
+    }
+    fn field(tag: u8, bytes: &[u8]) -> Vec<u8> {
+        let mut result = vec![tag];
+        let mut length = bytes.len();
+        while length >= 128 {
+            result.push((length as u8 & 0x7f) | 0x80);
+            length >>= 7;
+        }
+        result.push(length as u8);
+        result.extend_from_slice(bytes);
+        result
+    }
+    // UpdateUserProfileRequest: FieldMask(name), UserProfile(StringValue(name)).
+    let mut body = field(10, &field(10, b"name"));
+    body.extend(field(18, &field(18, &field(10, name.as_bytes()))));
+    Ok(body)
+}
+
 impl Users<'_> {
+    /// Updates this account's display name and optionally assigns a JPEG profile image.
+    /// Writes are sequential and are not atomic. Refresh the profile after a failure.
+    pub async fn update_profile(&self, name: &str, image: Option<&[u8]>) -> Result<(), Error> {
+        let name_body = profile_name_update(name)?;
+        if image.is_some_and(|bytes| {
+            bytes.len() > 10 * 1024 * 1024 || !bytes.starts_with(&[0xff, 0xd8, 0xff])
+        }) {
+            return Err(Error::InvalidInput(
+                "profile image must be a JPEG no larger than 10 MiB",
+            ));
+        }
+        let account = self.me().await?;
+        let token = if let Some(bytes) = image {
+            let response = self
+                .0
+                .request_raw(
+                    "POST",
+                    "https://image-upload.spotify.com/v4/user-profile",
+                    Some(bytes.to_vec()),
+                    "image/jpeg",
+                )
+                .await?;
+            let value: Value = serde_json::from_slice(&response.body)
+                .map_err(|_| Error::Backend("invalid profile image upload response".into()))?;
+            Some(
+                value["uploadToken"]
+                    .as_str()
+                    .filter(|s| !s.is_empty())
+                    .ok_or_else(|| Error::Backend("profile image upload returned no token".into()))?
+                    .to_owned(),
+            )
+        } else {
+            None
+        };
+        let username = segment(&account.username);
+        self.0
+            .request_raw(
+                "POST",
+                &format!("https://spclient.wg.spotify.com/identity/v3/user/username/{username}"),
+                Some(name_body),
+                "application/x-protobuf",
+            )
+            .await?;
+        if let Some(token) = token {
+            self.0
+                .request_raw(
+                    "POST",
+                    &format!(
+                        "https://spclient.wg.spotify.com/identity/v3/profile-image/{username}/{}",
+                        segment(&token)
+                    ),
+                    None,
+                    "application/x-protobuf",
+                )
+                .await?;
+        }
+        Ok(())
+    }
+
     pub async fn me(&self) -> Result<Account, Error> {
         let (profile, account) = tokio::try_join!(
             self.0.gql("profileAttributes", json!({})),
@@ -782,6 +864,19 @@ fn blend_id(value: &str) -> Result<String, Error> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn profile_name_update_preserves_wrapper_and_field_mask_wire_format() {
+        assert_eq!(
+            super::profile_name_update("Alex").unwrap(),
+            [
+                10, 6, 10, 4, 110, 97, 109, 101, 18, 8, 18, 6, 10, 4, 65, 108, 101, 120
+            ]
+        );
+        assert!(super::profile_name_update(" ").is_err());
+        assert!(super::profile_name_update(&"a".repeat(33)).is_err());
+        assert!(super::profile_name_update(&"🎵".repeat(32)).is_ok());
+    }
+
     use super::*;
     use serde_json::json;
 

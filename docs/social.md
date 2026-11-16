@@ -2,7 +2,7 @@
 
 [Users](#users-method-reference) · [Extras](#extras-method-reference) · [Recents](#recents-method-reference) · [Jam](#jam-method-reference) · [Blends](#blends-method-reference)
 
-Social/extras methods share the authenticated service session. Most responses are JSON; availability depends on the account, region and content.
+Social/extras methods share the authenticated service session. Most responses are JSON. Availability depends on the account, region and content.
 
 ## Profiles and track extras
 
@@ -19,9 +19,15 @@ async fn extras(spotify: &SpotCore, track_uri: &str) -> Result<(), spotcore::Err
 }
 ```
 
-`users()` also exposes public profiles, follows/followers, top listening data, friend activity, private-session controls and blocking. Do not promise that private-session controls erase existing history. `extras()` includes canvas, radio and taste exclusions. Lyrics can be missing (including 404) or have different timing detail; translations and word timing are not guaranteed.
+`users()` also exposes public profiles, follows/followers, top listening data, friend activity, private-session controls and blocking. Do not promise that private-session controls erase existing history. `extras()` includes canvas, radio and taste exclusions. Lyrics can be missing (including 404) or have different timing detail. Translations and word timing are not guaranteed.
 
-`blends()` exposes invitation, join, group, story, rename and leave operations. Blend and Jam are separate features. Method availability is not proof every social mutation has been live-verified.
+`blends()` exposes invitation, join, group, story, rename and leave operations. Blend and Jam are separate features. **Handle service rejection and verify the resulting state after social writes.** Account, region and privacy rules still apply.
+
+## Edit the current profile
+
+**`users().update_profile(name, image)` edits only the signed-in account.** Supply a display name of 1 to 32 characters and optionally a JPEG byte slice. `None` leaves the photo unchanged. An image must be no larger than 10 MiB. Prepare a square image of at least 300 by 300 pixels in the application.
+
+The SDK resolves the current username, uploads a selected image, updates the name through the identity service, then assigns the uploaded image token. **Name and photo writes are not atomic.** Refresh the profile after an error because a preceding step may have succeeded. Writes are not automatically replayed. The request format follows Spotify's current Web Player, and remains subject to upstream changes. Live account validation is still required.
 
 ## Host a Jam and share its invite
 
@@ -43,22 +49,22 @@ async fn host_jam(spotify: &SpotCore) -> Result<(), spotcore::Error> {
 
 Keep the Jam active while sharing. Call `jam().end().await?` when the host chooses to end it. Avoid starting a new Jam over an unrelated existing session: read `session()` first in production UI.
 
-**Verified live:** Premium browserless start, session read, end with cleanup, and HTTPS invite generation through the SDK. Invites use the current device's session and reject mismatched session IDs. Invite generation succeeded; completing a guest join using that generated link was not tested.
+**Host workflow:** start a Jam, read the current session, generate its HTTPS invite, and end it when the host chooses. Invites use the current device's session and reject mismatched session IDs. Guests should open invites in Spotify's official app.
 
-**Not supported as a verified feature:** guest joining through SpotCore. The public join call returned 411; a diagnostic request reached 403 `USER_NOT_ALLOWED`. Its cause remains unresolved. Guests should use Spotify's official app.
+**Guest joining through SpotCore is unsupported.** Spotify can reject it with HTTP 411 or 403 `USER_NOT_ALLOWED`. Do not build a guest-join flow around the exposed method.
 
-`availability()` returns client configuration (`ENABLED`), not server-confirmed hosting eligibility. When no Jam is active, `session()` returns `null` without an error; this lookup is per-device, not an account-wide session index.
+`availability()` returns client configuration (`ENABLED`), not server-confirmed hosting eligibility. When no Jam is active, `session()` returns `null` without an error. This lookup is per-device, not an account-wide session index.
 
-`set_queue_only(true)` expresses queue-only guest permissions; `false` requests playback controls again. `set_participant_volume_control` and `remove_member` are also exposed. Their actual guest effects and guest leave remain unverified. HTTP mode has no live `session_update` push stream. Soloist supplies a playback receiver, not the SDK's Jam hosting API.
+`set_queue_only(true)` requests queue-only guest permissions. Pass `false` to request playback controls again. `set_participant_volume_control` and `remove_member` request guest volume permissions and participant removal. **Verify the resulting session state after guest-control changes.** Guest-control effects and guest leave are not validated across accounts. HTTP mode has no live `session_update` push stream. Soloist supplies a playback receiver. Hosting requests use the service API.
 
 ## Extras method reference
 
-Receiver arguments are omitted. `Value` means `serde_json::Value`; the return column includes the complete `Result` type.
+Receiver arguments are omitted. `Value` means `serde_json::Value`. The return column includes the complete `Result` type.
 
 | Method and inputs | Returns | Behavior |
 | --- | --- | --- |
-| `radio_uri(seed: &str)` | `Result<Option<String>, Error>` | Resolve an optional single-seed radio context; malformed data is an error. |
-| `lyrics(value: &str)` | `Result<Value, Error>` | Read available lyric data; missing lyrics can return 404. |
+| `radio_uri(seed: &str)` | `Result<Option<String>, Error>` | Resolve an optional single-seed radio context. Malformed data is an error. |
+| `lyrics(value: &str)` | `Result<Value, Error>` | Read available lyric data. Missing lyrics can return 404. |
 | `canvas(value: &str)` | `Result<Value, Error>` | Read available Canvas video metadata. |
 | `credits(value: &str)` | `Result<Value, Error>` | Read track credit metadata. |
 | `radio(value: &str)` | `Result<Value, Error>` | Read the raw single-seed radio response. |
@@ -69,18 +75,19 @@ Receiver arguments are omitted. `Value` means `serde_json::Value`; the return co
 
 ## Recents method reference
 
-Receiver arguments are omitted. `Value` means `serde_json::Value`; the return column includes the complete `Result` type.
+Receiver arguments are omitted. `Value` means `serde_json::Value`. The return column includes the complete `Result` type.
 
 | Method and inputs | Returns | Behavior |
 | --- | --- | --- |
-| `entries(paging: Paging)` | `Result<Value, Error>` | Read original grouped recent-listening rows; not recent searches. |
+| `entries(paging: Paging)` | `Result<Value, Error>` | Read original grouped recent-listening rows. Not recent searches. |
 
 ## Users method reference
 
-Receiver arguments are omitted. `Value` means `serde_json::Value`; the return column includes the complete `Result` type.
+Receiver arguments are omitted. `Value` means `serde_json::Value`. The return column includes the complete `Result` type.
 
 | Method and inputs | Returns | Behavior |
 | --- | --- | --- |
+| `update_profile(name: &str, image: Option<&[u8]>)` | `Result<(), Error>` | Update the current account name and optionally its JPEG photo. |
 | `me()` | `Result<Account, Error>` | Resolve current profile, canonical identity, tier and country. |
 | `profile(value: &str)` | `Result<Value, Error>` | Read a public user profile. |
 | `followers(value: &str)` | `Result<Value, Error>` | Read the user’s followers. |
@@ -97,30 +104,30 @@ Receiver arguments are omitted. `Value` means `serde_json::Value`; the return co
 
 ## Jam method reference
 
-Receiver arguments are omitted. `Value` means `serde_json::Value`; the return column includes the complete `Result` type.
+Receiver arguments are omitted. `Value` means `serde_json::Value`. The return column includes the complete `Result` type.
 
 | Method and inputs | Returns | Behavior |
 | --- | --- | --- |
 | `availability()` | `Result<Value, Error>` | Return client configuration, not server-confirmed account eligibility. |
 | `session()` | `Result<Value, Error>` | Read the selected device’s Jam, or null when absent. |
-| `start()` | `Result<Value, Error>` | Request hosting; Premium and a Connect receiver are required. |
-| `join(token: &str)` | `Result<Value, Error>` | Consume an invitation; Jam joining is not verified/supported. |
-| `leave()` | `Result<Value, Error>` | Request guest leave; not live-verified. |
-| `end()` | `Result<Value, Error>` | End a hosted Jam; live-verified with absence checked afterward. |
-| `invite_link(session_id: &str)` | `Result<Value, Error>` | Generate a shareable URL for the matching current Jam; live-verified. |
-| `remove_member(value: &str)` | `Result<Value, Error>` | Remove the supplied participant user URI from the current Jam; unverified live. |
-| `set_queue_only(enabled: bool)` | `Result<Value, Error>` | Request queue-only permissions; actual guest effects unverified. |
-| `set_participant_volume_control(enabled: bool)` | `Result<Value, Error>` | Request participant volume permissions; guest effects unverified. |
+| `start()` | `Result<Value, Error>` | Request hosting. Premium and a Connect receiver are required. |
+| `join(token: &str)` | `Result<Value, Error>` | Consume an invitation. Jam joining is not verified/supported. |
+| `leave()` | `Result<Value, Error>` | Request guest leave. Not live-verified. |
+| `end()` | `Result<Value, Error>` | End a hosted Jam. Read the session afterward to confirm it ended. |
+| `invite_link(session_id: &str)` | `Result<Value, Error>` | Generate a shareable URL for the matching current Jam. |
+| `remove_member(value: &str)` | `Result<Value, Error>` | Request removal of a participant user URI. Verify the resulting session. |
+| `set_queue_only(enabled: bool)` | `Result<Value, Error>` | Request queue-only permissions. Verify guest permissions afterward. |
+| `set_participant_volume_control(enabled: bool)` | `Result<Value, Error>` | Request participant volume permissions. Verify the resulting state. |
 
 ## Blends method reference
 
-Receiver arguments are omitted. `Value` means `serde_json::Value`; the return column includes the complete `Result` type.
+Receiver arguments are omitted. `Value` means `serde_json::Value`. The return column includes the complete `Result` type.
 
 | Method and inputs | Returns | Behavior |
 | --- | --- | --- |
 | `invite()` | `Result<Value, Error>` | Create a Blend invitation. |
 | `invitation(link_or_id: &str)` | `Result<Value, Error>` | Read a Blend invitation from a link or ID. |
-| `join(link_or_id: &str)` | `Result<Value, Error>` | Accept a Blend invitation link or ID; separate from Jam joining. |
+| `join(link_or_id: &str)` | `Result<Value, Error>` | Accept a Blend invitation link or ID. Separate from Jam joining. |
 | `group(value: &str)` | `Result<Value, Error>` | Read a Blend group. |
 | `story(value: &str)` | `Result<Value, Error>` | Read Blend story/taste-match data. |
 | `rename(value: &str, name: &str)` | `Result<Value, Error>` | Rename the Blend identified by its playlist URI. |
@@ -128,8 +135,8 @@ Receiver arguments are omitted. `Value` means `serde_json::Value`; the return co
 
 ## Social inputs and time ranges
 
-`Users` profile/follow/block methods accept Spotify user URIs. `top` accepts `TimeRange::{ShortTerm, MediumTerm, LongTerm}` and a limit 1–100; the response contains both track and artist sections. These are Spotify-defined windows, not an arbitrary start/end-date query. `history()` reads contexts while `recents().entries(Paging)` retains grouped recent-listening rows; neither is the same as `search().recent_items()`.
+`Users` profile/follow/block methods accept Spotify user URIs. `top` accepts `TimeRange::{ShortTerm, MediumTerm, LongTerm}` and a limit 1–100. The response contains both track and artist sections. These are Spotify-defined windows, not an arbitrary start/end-date query. `history()` reads contexts while `recents().entries(Paging)` retains grouped recent-listening rows. Neither is the same as `search().recent_items()`.
 
-Extras typically take track URIs for lyrics/canvas/credits; taste exclusions and artist-ban methods write Spotify collection preferences. They do not filter the SDK’s local output or guarantee every receiver enforces them immediately.
+Extras typically take track URIs for lyrics/canvas/credits. Taste exclusions and artist-ban methods write Spotify collection preferences. They do not filter the SDK’s local output or guarantee every receiver enforces them immediately.
 
-Blend invitation methods take the supported invitation URL/ID form; group/story, rename and leave take the Blend playlist URI. Jam `join` expects a join token, not an entire redirect URL; it remains unverified/unsupported. Never publish private invite tokens in logs. Read the current session before host mutations.
+Blend invitation methods take the supported invitation URL/ID form. Group/story, rename and leave take the Blend playlist URI. Jam `join` expects a join token, not an entire redirect URL. It remains unverified/unsupported. Never publish private invite tokens in logs. Read the current session before host mutations.

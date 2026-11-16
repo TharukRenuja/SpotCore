@@ -33,6 +33,36 @@ pub(crate) fn is_spotify_page(value: &str) -> bool {
     })
 }
 
+fn is_login_page(value: &str) -> bool {
+    is_spotify_page(value)
+        || Url::parse(value).is_ok_and(|url| {
+            url.scheme() == "https"
+                && url.host_str() == Some("accounts.spotify.com")
+                && url.port_or_known_default() == Some(443)
+                && url.username().is_empty()
+                && url.password().is_none()
+        })
+}
+
+fn session_cookie(value: &Value) -> Result<String, Error> {
+    let cookies = value["cookies"].as_array().ok_or(Error::Unsupported)?;
+    let mut matches = cookies.iter().filter(|cookie| {
+        cookie["name"] == "sp_dc"
+            && cookie["domain"].as_str().is_some_and(|domain| {
+                matches!(domain, ".spotify.com" | "spotify.com" | "open.spotify.com")
+            })
+    });
+    let value = matches
+        .next()
+        .and_then(|cookie| cookie["value"].as_str())
+        .filter(|value| !value.is_empty() && !value.contains(['\r', '\n', '\0']))
+        .ok_or(Error::NotAuthenticated)?;
+    if matches.next().is_some() {
+        return Err(Error::Backend("ambiguous Spotify session cookies".into()));
+    }
+    Ok(value.to_owned())
+}
+
 fn local_url(value: &str, websocket: bool) -> Result<Url, Error> {
     let url =
         Url::parse(value).map_err(|_| Error::InvalidInput("invalid browser debugging URL"))?;
@@ -76,6 +106,29 @@ impl Cdp {
         target_id: Option<&str>,
         allow_blank: bool,
     ) -> Result<Self, Error> {
+        Self::connect_scoped(endpoint, target_id, allow_blank, false).await
+    }
+
+    pub(crate) async fn connect_login(endpoint: &str) -> Result<Self, Error> {
+        Self::connect_scoped(endpoint, None, false, true).await
+    }
+
+    pub(crate) async fn session_cookie(&self) -> Result<String, Error> {
+        let value = self
+            .request(
+                "Network.getCookies",
+                json!({"urls":["https://open.spotify.com/"]}),
+            )
+            .await?;
+        session_cookie(&value)
+    }
+
+    async fn connect_scoped(
+        endpoint: &str,
+        target_id: Option<&str>,
+        allow_blank: bool,
+        login: bool,
+    ) -> Result<Self, Error> {
         let mut url = local_url(endpoint, false)?;
         if url.query().is_some() || !matches!(url.path(), "" | "/") {
             return Err(Error::InvalidInput("use the browser debugging base URL"));
@@ -98,7 +151,9 @@ impl Cdp {
         let mut pages = targets.iter().filter(|v| {
             v["type"] == "page"
                 && v["url"].as_str().is_some_and(|url| {
-                    is_spotify_page(url) || (allow_blank && url == "about:blank")
+                    is_spotify_page(url)
+                        || (login && is_login_page(url))
+                        || (allow_blank && url == "about:blank")
                 })
                 && target_id.is_none_or(|id| v["id"] == id)
         });
@@ -219,6 +274,39 @@ impl Cdp {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn managed_login_only_accepts_spotify_pages_and_one_scoped_cookie() {
+        assert!(is_login_page("https://accounts.spotify.com/login"));
+        assert!(is_login_page("https://open.spotify.com/"));
+        assert!(!is_spotify_page("https://accounts.spotify.com/login"));
+        for url in [
+            "https://accounts.spotify.com.evil/login",
+            "http://accounts.spotify.com/login",
+            "https://user@accounts.spotify.com/",
+            "https://accounts.google.com/",
+        ] {
+            assert!(!is_login_page(url));
+        }
+        let cookie = json!({"name":"sp_dc","domain":".spotify.com","value":"session"});
+        assert_eq!(
+            session_cookie(&json!({"cookies":[cookie.clone()]})).unwrap(),
+            "session"
+        );
+        assert!(session_cookie(&json!({"cookies":[cookie.clone(), cookie]})).is_err());
+        for (domain, value) in [
+            ("spotify.com.evil", "session"),
+            (".spotify.com", ""),
+            (".spotify.com", "bad\nvalue"),
+        ] {
+            assert!(
+                session_cookie(
+                    &json!({"cookies":[{"name":"sp_dc","domain":domain,"value":value}]})
+                )
+                .is_err()
+            );
+        }
+    }
+
     #[test]
     fn rejects_remote_debuggers_and_lookalike_origins() {
         for url in [

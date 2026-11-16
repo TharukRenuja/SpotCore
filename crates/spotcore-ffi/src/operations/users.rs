@@ -114,6 +114,20 @@ pub(super) async fn call(
             let p: Args = parse(arguments)?;
             encode(sdk.users().unfollow(&p.values).await?)
         }
+        "update_profile" => {
+            #[derive(serde::Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Args {
+                name: String,
+                image: Option<Vec<u8>>,
+            }
+            let p: Args = parse(arguments)?;
+            encode(
+                sdk.users()
+                    .update_profile(&p.name, p.image.as_deref())
+                    .await?,
+            )
+        }
         _ => Err(super::unknown()),
     }
 }

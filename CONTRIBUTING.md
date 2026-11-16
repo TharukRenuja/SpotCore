@@ -6,11 +6,11 @@ Bug fixes, documentation improvements and binding fixes are welcome. Keep each c
 
 Include your OS and architecture, SpotCore revision, account tier, playback backend and the steps to reproduce it. Tell us what you expected and what happened instead. For binding issues, include the language and runtime version too.
 
-Share only sanitized errors. Never include cookies, API keys, access tokens, account-store files or raw authenticated network traces. Offline reproductions are especially helpful; a bug report doesn’t need your Spotify credentials.
+Share only sanitized errors. Never include cookies, API keys, access tokens, account-store files or raw authenticated network traces. Offline reproductions are especially helpful. A bug report doesn’t need your Spotify credentials.
 
 ## Work on the SDK
 
-Use Rust 1.89 or newer, Python 3 for the operation generator, and Node.js for the JavaScript bridge tests. Start with the [installation guide](docs/installation.md). Browser playback also needs the [engine setup](docs/engines.md); offline SDK checks don’t require a Spotify account or playback runtime.
+Use Rust 1.89 or newer, Python 3 for the operation generator, and Node.js for the JavaScript bridge tests. Start with the [installation guide](docs/installation.md). Browser playback also needs the [engine setup](docs/engines.md). Offline SDK checks don’t require a Spotify account or playback runtime.
 
 Make your change on a branch. Fix shared behavior in the Rust SDK rather than duplicating Spotify logic in a language wrapper. Add a regression check for changed behavior, and update the relevant [developer guide](docs/README.md) when an API or setup step changes.
 
@@ -29,17 +29,17 @@ node crates/web/tests/js/bridge.test.cjs
 node crates/web/tests/js/services.test.cjs
 ```
 
-These commands check the SDK without compiling the optional OS web-engine helper. Whole-workspace checks also build `host/system`; Linux needs WebKitGTK/GTK development packages as described in [engine setup](docs/engines.md). CI checks desktop platforms and Rust feature combinations. Live account tests are separate and opt-in.
+These commands check the SDK without compiling the optional OS web-engine helper. Whole-workspace checks also build `host/system`. Linux needs WebKitGTK/GTK development packages as described in [engine setup](docs/engines.md). CI checks desktop platforms and Rust feature combinations. Live account tests are separate and opt-in.
 
 ## CI runs
 
 Code changes run the SDK, FFI, launcher and Node checks together on Linux. Documentation changes get lightweight link and generated-reference checks without compiling the SDK. Feature branches use pull-request checks instead of duplicate push and PR runs.
 
-Before a version release or after platform-specific changes, open **Actions → CI → Run workflow** and enable **full**. This adds Windows/macOS, Rust 1.89 and OS web-engine checks. Artifact packaging stays separate on the development repository. Runs have timeouts, superseded runs are cancelled, and failure diagnostics expire after three days.
+Before a version release or after platform-specific changes, open **Actions → CI → Run workflow** and enable **full**. This adds Windows/macOS, Rust 1.89 and OS web-engine checks. Build and validate deployment artifacts for each target separately. Runs have timeouts, superseded runs are cancelled, and failure diagnostics expire after three days.
 
 ## Change a binding
 
-The shared binding layer lives in `crates/spotcore-ffi`; wrappers, tests and examples live under `bindings/`. Edit the source rather than generated files. If service or playback signatures change, regenerate the operation adapters and reference:
+The shared binding layer lives in `crates/spotcore-ffi`. Wrappers, tests and examples live under `bindings/`. Edit the source rather than generated files. If service or playback signatures change, regenerate the operation adapters and reference:
 
 ```sh
 python3 scripts/generate_ffi_operations.py

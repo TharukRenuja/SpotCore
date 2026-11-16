@@ -1,6 +1,6 @@
 # Podcasts and audiobooks
 
-Use `podcasts()` for show, episode, audiobook and chapter metadata. Spoken-audio playback uses the same player as music; see [playback](playback.md) for speed and relative seeking.
+Use `podcasts()` for show, episode, audiobook and chapter metadata. Spoken-audio playback uses the same player as music. See [playback](playback.md) for speed and relative seeking.
 
 ```rust
 use spotcore::{Paging, SpotCore};
@@ -13,15 +13,15 @@ async fn episodes(spotify: &SpotCore, show_uri: &str) -> Result<(), spotcore::Er
 }
 ```
 
-A show URI is not an episode URI. Pass show URIs to show/episode-list methods and episode URIs to episode/saved-episode methods. Audiobooks share parts of Spotify’s show/episode representation; do not infer audiobook entitlement from a successful metadata response.
+A show URI is not an episode URI. Pass show URIs to show/episode-list methods and episode URIs to episode/saved-episode methods. Audiobooks share parts of Spotify’s show/episode representation. Do not infer audiobook entitlement from a successful metadata response.
 
-`set_saved(episode_uri, true)` saves an episode; `false` removes it. `saved_episodes()` returns a raw collection response. Audiobook save/progress parity is not provided. The SDK does not download audio for offline use.
+`set_saved(episode_uri, true)` saves an episode. `false` removes it. `saved_episodes()` returns a raw collection response. Audiobook save/progress parity is not provided. The SDK does not download audio for offline use.
 
 Regional availability matters: a query may be restricted or empty in one market and succeed in another. Missing resume position, duration or description stays optional. Follow `next_offset` for episode/chapter pages, including pages with unrecognized rows.
 
 ## Podcasts method reference
 
-Receiver arguments are omitted. `Value` means `serde_json::Value`; the return column includes the complete `Result` type.
+Receiver arguments are omitted. `Value` means `serde_json::Value`. The return column includes the complete `Result` type.
 
 | Method and inputs | Returns | Behavior |
 | --- | --- | --- |

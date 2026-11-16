@@ -1,6 +1,6 @@
 # Quickstart
 
-Use Rust 1.89 or newer. Packages and release tags are not published for installation yet. Build from a local checkout; the path below assumes your app and SpotCore are sibling directories:
+**Requires Rust 1.89 or newer.** The example below builds from source with your app and SpotCore in sibling directories. For a pinned Git dependency, see [installation](installation.md).
 
 ```toml
 [dependencies]
@@ -38,17 +38,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-Build or install the [launcher and Web engine](engines.md) before local Web playback. A cookie does not remove the Widevine/AAC requirement.
+**Set up the [launcher and Web engine](engines.md) before local Web playback.** A cookie does not remove the Widevine/AAC requirement.
 
 ```sh
 SPOTCORE_COOKIE_FILE=/absolute/path/to/private-cookie cargo run
 ```
 
-This variable is read by the example above; the builder does not automatically read a cookie file. Never commit cookies or print them in logs.
+The example reads `SPOTCORE_COOKIE_FILE`. The builder does not read it automatically. **Never commit cookies or print them in logs.**
 
 ## Services only: skip local playback setup
 
-Use this when your app needs Spotify data or controls an existing Connect device. In this example, `launch()` starts an authenticated SDK session; **it does not open a browser**.
+Use this when your app needs Spotify data or controls an existing Connect device. In this example, `launch()` starts an authenticated SDK session. **it does not open a browser**.
 
 ```rust
 use spotcore::{BrowserRole, SpotCore};
@@ -69,4 +69,4 @@ Here, `session_cookie` supplies authentication, `BrowserRole::Services` skips lo
 
 Without `.browser_role(BrowserRole::Services)`, the default is `Playback`: `launch()` prepares local playback immediately, using an opted-in eligible native engine or a Web browser. Browser startup is not deferred until `play()`.
 
-The services-only example produces no local audio or playback event stream. Remote controls need an existing Connect receiver. To add local audio, choose a playback session as shown above or explicitly opt into native playback; see [playback](playback.md). Profile-only browser sessions are a separate path under [authentication](authentication.md).
+The services-only example produces no local audio or playback event stream. Remote controls need an existing Connect receiver. To add local audio, choose a playback session as shown above or explicitly opt into native playback. See [playback](playback.md). Profile-only browser sessions are a separate path under [authentication](authentication.md).

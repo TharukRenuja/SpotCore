@@ -106,8 +106,28 @@ pub fn run() -> Result<()> {
     let window = WindowBuilder::new()
         .with_title(std::env::var("SPOTCORE_APP_NAME").unwrap_or_else(|_| "SpotCore".into()))
         .with_visible(login || args.iter().any(|arg| arg == "--visible"))
-        .with_inner_size(tao::dpi::LogicalSize::new(1024.0, 768.0))
+        .with_inner_size(if login {
+            tao::dpi::LogicalSize::new(520.0, 720.0)
+        } else {
+            tao::dpi::LogicalSize::new(1024.0, 768.0)
+        })
         .build(&event_loop)?;
+    if login && let Some(monitor) = window.current_monitor() {
+        let available = monitor.size();
+        let scale = monitor.scale_factor();
+        let width = (520.0 * scale)
+            .round()
+            .min((available.width as f64 - 32.0 * scale).max(1.0)) as u32;
+        let height = (720.0 * scale)
+            .round()
+            .min((available.height as f64 - 32.0 * scale).max(1.0)) as u32;
+        window.set_inner_size(tao::dpi::PhysicalSize::new(width, height));
+        let position = monitor.position();
+        window.set_outer_position(tao::dpi::PhysicalPosition::new(
+            position.x + ((available.width.saturating_sub(width)) / 2) as i32,
+            position.y + ((available.height.saturating_sub(height)) / 2) as i32,
+        ));
+    }
     let mut web_context = WebContext::new(Some(profile.clone()));
     let ipc = proxy.clone();
     let loaded = proxy.clone();
@@ -194,7 +214,7 @@ pub fn run() -> Result<()> {
         }
         if !smoke {
             view.load_url(if login {
-                "https://accounts.spotify.com/login"
+                "https://accounts.spotify.com/login?continue=https%3A%2F%2Fopen.spotify.com%2F"
             } else {
                 "https://open.spotify.com"
             })?;
@@ -202,7 +222,7 @@ pub fn run() -> Result<()> {
     }
     let current_url = Arc::new(Mutex::new("about:blank".to_owned()));
     let (output, incoming) = sync_channel(256);
-    if !login && !smoke && !forget {
+    if !smoke && !forget && (!login || args.iter().any(|arg| arg == "--verified-login")) {
         let port = value("--cdp-port")
             .ok_or("debug port required")?
             .parse::<u16>()?;

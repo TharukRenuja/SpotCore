@@ -1310,5 +1310,13 @@
       "values": "Vec<String>"
     },
     "result": "Value"
+  },
+  {
+    "operation": "users.update_profile",
+    "arguments": {
+      "name": "String",
+      "image": "Option<Vec<u8>>"
+    },
+    "result": "()"
   }
 ]

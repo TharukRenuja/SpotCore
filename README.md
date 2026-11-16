@@ -8,12 +8,23 @@
 <img src="https://img.shields.io/badge/Rust-1.89%2B-orange" alt="Rust 1.89 or newer">
 </p>
 
-Building a Spotify app? SpotCore brings Spotify services and playback together in one SDK. Free and Premium accounts can use Spotify’s Web Player, and Premium accounts can also opt into Soloist for native playback. SpotCore does not decrypt protected content itself, remove advertising, or bypass account entitlements.
+**SpotCore** provides Spotify services and playback for applications. Free and Premium accounts can use Spotify’s Web Player, and Premium accounts can also opt into Soloist for native playback. SpotCore does not decrypt protected content itself, remove advertising, or bypass account entitlements.
+
+## Add to your app
+
+**Requires Rust 1.89 or newer.** Cargo can build SpotCore directly from GitHub without a crates.io package. Once the `v0.1.1` release tag is published, add:
+
+```toml
+[dependencies]
+spotcore = { git = "https://github.com/TharukRenuja/SpotCore.git", tag = "v0.1.1" }
+```
+
+**Use a published tag or pin a full commit with `rev`, then commit your application's `Cargo.lock`.** Version `0.1.1` is currently prepared in this checkout. Its tag has not been published yet. Add `features = ["native"]` if your app needs Soloist support. See [installation](docs/installation.md) for a local source dependency and runtime setup.
 
 ## Start playing
 
 ```rust
-use spotcore::SpotCore;
+use spotcore::{Paging, SearchKind, SpotCore};
 
 let mut spotify = SpotCore::builder()
     .session_cookie(sp_dc)
@@ -22,67 +33,87 @@ let mut spotify = SpotCore::builder()
     .await?;
 
 spotify.play("spotify:track:0aWMVrwxPNYkKmFthzmpRi").await?;
-spotify.pause().await?;
-spotify.resume().await?;
-spotify.next().await?;
+
+let results = spotify.search()
+    .query(SearchKind::Tracks, "track:Ordinary artist:Alex Warren", Paging::default())
+    .await?;
+
+if let Some(track) = results.items.first() {
+    spotify.play(&track.uri).await?;
+}
+
+// When your app is finished with the session:
+spotify.shutdown().await?;
 ```
 
-Use this inside your app's async function; the app supplies `sp_dc`. These lines demonstrate individual controls, rather than a playback sequence to run immediately. Keep the session alive while listening and call `shutdown().await?` when finished. The [quickstart](docs/quickstart.md) covers dependencies, credentials and engine setup.
+Your app supplies the **`sp_dc` session cookie** and an async runtime. These examples show how to play a track, search Spotify and close the session. **Keep the session alive while playing and call `shutdown().await?` when finished.** The [quickstart](docs/quickstart.md) includes a complete application.
 
-## A quick note
+---
 
-Unofficial project, not affiliated with or endorsed by Spotify. Playback uses Spotify's own components and respects account entitlements. Licensed under [GNU GPL v3](LICENSE); see [third-party notices](THIRD-PARTY-NOTICES.md).
+## Disclaimer
 
-## What you can build
+**SpotCore is an unofficial project and is not affiliated with, endorsed by or supported by Spotify.** Spotify’s services, content and software remain subject to their own terms and account permissions.
 
-- **A player for Free and Premium accounts:** Web playback, optional native audio, quality selection, podcast speed, queues and Spotify Connect.
-- **A personalized music app:** Home shelves, nine search categories, detailed catalog metadata, playlist suggestions and radio blends.
-- **Library and playlist tools:** Save music, follow artists and shows, organize folders, edit playlists and manage covers.
-- **Social features:** Profiles, lyrics, canvas, credits, Blends, and Premium Jam hosting with shareable invites.
-- **Multi-account applications:** Isolated profiles, application-specific paths and credential-store integration.
+**Use SpotCore at your own risk.** Uninterrupted access and freedom from account restrictions, suspension or termination are not guaranteed. Using Spotify’s own playback components does not eliminate these risks. You are responsible for your use of the SDK and compliance with Spotify’s applicable terms.
+
+SpotCore is licensed under [GPL-3.0](LICENSE). See [third-party notices](THIRD-PARTY-NOTICES.md) for component licenses and attribution.
+
+---
 
 ## Capabilities
 
-Services are shared across playback backends. Cookie-backed service access does not need a running browser; HTTP controls require an existing Connect receiver.
+### Choose how your app runs
 
-| Capability | HTTP services / remote device | Web playback | Optional native playback |
-| --- | --- | --- | --- |
-| Search, catalog, Home and browse | Yes | Shared services | Shared services |
-| Library saves, follows and folders | Yes | Shared services | Shared services |
-| Playlist reads, edits and covers | Yes, subject to permissions | Shared services | Shared services |
-| Profiles, lyrics, canvas and credits | Yes, where available | Shared services | Shared services |
-| Local audio | No | Spotify Web Player | Spotify Soloist |
-| Play, pause, seek, shuffle and repeat | Existing receiver and its restrictions | Yes, subject to current permissions | Yes, with service routing where needed |
-| Queue add / clear / remove | Active receiver, with restrictions | Yes | Unified service controls |
-| Queue insert / reorder / skip-to | Unsupported | Browser-assisted controls | Requires an attached Web session |
-| Local playback events | No synthetic event stream | Yes | Yes |
-| Quality selection | Device settings where supported | Preference up to VeryHigh | Device/account-supported levels |
-| Jam host / invite / end | Verified with Premium host | Shared services | Shared services; Soloist is a receiver |
-| Jam guest joining | Not supported as a verified feature | Not supported as a verified feature | Not supported as a verified feature |
-
-### Accounts and runtime
-
-| | Free | Premium |
+| What your app needs | What to use | What it requires |
 | --- | --- | --- |
-| Spotify service access | Yes, subject to region and permissions | Yes, subject to region and permissions |
-| Local Web playback | Yes; Spotify ads remain | Yes |
-| Optional Soloist playback | SDK does not select it | Opt-in with API key and supported platform |
-| Jam hosting and invites | Premium required | Verified |
-| Lossless / HiRes preference | No entitlement bypass | Native only where device, account and content permit |
+| Spotify data or control of another device | **Services mode** | Session cookie. No browser or local player needed. Remote controls need an existing Connect device. |
+| Play audio locally with Free or Premium | **Web playback** | Session cookie, launcher or embedded supervisor, compatible browser engine, Widevine and AAC. |
+| Play audio locally through Soloist | **Native playback** | `native` Cargo feature, Premium account, Soloist API key and a supported platform. |
 
-[Playback](docs/playback.md) explains routing and quality. [Engines](docs/engines.md) covers the common launcher, system QtWebEngine, installed-browser fallback and Widevine. Linux runtime paths have local coverage; Windows/macOS builds do not establish real DRM/audio compatibility on every machine.
+Use `BrowserRole::Services` for data and remote control without starting a browser. The default `launch()` prepares local playback immediately. **All modes use the same Spotify service APIs.**
+
+### What you can do
+
+| Feature | Answer |
+| --- | --- |
+| Search, catalog, Home and browse | **Yes.** Read Spotify data in any mode. |
+| Saves, follows and library folders | **Yes.** Read and update the signed-in account's library. |
+| Playlists and covers | **Yes.** Read playlists and edit those the account can modify. |
+| Profiles, lyrics, Canvas and credits | **Yes, when Spotify provides them.** Availability depends on content and account. |
+| Play, pause, seek, shuffle and repeat | **Yes.** The target device and current content must allow the control. |
+| Add, clear, remove, insert and reorder queue rows | **Yes.** HTTP edits require an active receiver. Exact row edits use returned URI/UID pairs. |
+| Jump directly to a queue row | **Web session required.** HTTP-only sessions do not support skip-to. |
+| Playback events | **Web and native sessions.** Services-only apps poll state. |
+| Audio quality | **Web: up to VeryHigh. Native: device/account-supported levels.** A selected preference does not prove delivered audio quality. |
+| Host a Jam, share an invite and end it | **Yes, with Premium and an available Connect receiver.** Soloist can be the receiver. |
+| Join a Jam as a guest | **Unsupported through SpotCore.** Use Spotify's official app. |
+| Download tracks or listen offline | **No.** SpotCore supports streaming only. |
+
+### Free or Premium?
+
+| Feature | Free | Premium |
+| --- | --- | --- |
+| Spotify data and remote controls | **Yes**, with account/device restrictions | **Yes**, with account/device restrictions |
+| Local Web playback | **Yes, with ads** | **Yes** |
+| Local Soloist playback | **No** | **Yes**, with an API key and supported platform |
+| Host a Jam | **No** | **Yes**, with an available receiver |
+| Lossless / HiRes preference | **No** | **Native only**, when the account, device and content allow it |
+
+**Playback uses Spotify's own components and account permissions.** See [playback and queues](docs/playback.md) for routing and controls, and [engine setup](docs/engines.md) for installation. Verify DRM, codecs and audio on each deployment target.
 
 ## Platforms
 
-| Platform | Services and remote controls | Local Web playback | Optional Soloist playback |
+| Platform | Data and remote controls | Local Web audio | Local Soloist audio |
 | --- | :---: | :---: | :---: |
-| Linux x86_64 / ARM64 | ✅ | ✅ | ✅ |
-| Linux ARMv7 | Not verified | Not verified | ✅ |
-| Windows x86_64 | ✅ | ✅ | ✅ |
-| macOS Apple Silicon | ✅ | ✅ | ✅ |
-| macOS Intel | ✅ | ✅ | ❌ |
-| Android | In development | In development | In development |
-| iOS | Not tested | ❌ | ❌ |
+| Linux x86_64 / ARM64 | Yes | Yes | Yes |
+| Linux ARMv7 | Yes | Yes | Yes |
+| Windows x86_64 | Yes | Yes | Yes |
+| macOS Apple Silicon | Yes | Yes | Yes |
+| macOS Intel | Yes | Yes | No |
+| Android | Yes | Yes | No |
+| iOS | Not tested | Not tested | No |
+
+**Web audio needs a compatible engine, DRM and codecs on that platform.** Language bindings do not supply a mobile playback host. See [platform prerequisites](docs/engines.md#platform-prerequisites-and-packaging) before packaging your app.
 
 ## Developer guides
 
@@ -101,12 +132,12 @@ Services are shared across playback backends. Cookie-backed service access does 
 
 ## Language bindings
 
-Use Rust directly, or pick your language: Python, JavaScript/TypeScript, C#, Java, Kotlin, Swift, Dart (experimental), C, C++ or Go. Each binding provides starter methods and access to all 171 current service/playback operations through `invoke()`. Broader operation arguments and results use JSON; they are not fully typed in every language.
+**Rust, Python, JavaScript/TypeScript, C#, Java, Kotlin, Swift, C, C++ and Go** are available. **Dart is experimental.** Each binding offers typed starter methods and access to all 172 service/playback operations through **`invoke()`**. Those broader operations use JSON arguments and results.
 
-We’ve checked all ten bindings locally on Linux, and Node also has Windows/macOS CI coverage. Sampled live-account checks cover Python and Node on Linux. Bindings share the SDK’s runtime requirements and do not bundle playback engines. See the [binding matrix and setup](bindings/README.md).
+**Build bindings for the target OS and architecture.** They share the SDK’s runtime requirements and do not bundle playback engines. See the [binding matrix and setup](bindings/README.md).
 
 Build the Rust API reference with `cargo doc -p spotcore --all-features --no-deps`.
 
 ## Special thanks
 
-Special thanks to kota-zo and everyone behind [Myspoti](https://github.com/kota-zo/myspoti)! SpotCore builds on their browser bridge and Spotify API mappings. You’ll find the credits and license details in [third-party notices](THIRD-PARTY-NOTICES.md).
+Special thanks to **kota-zo and contributors** behind [**Orpheon**](https://github.com/kota-zo/Orpheon) (formerly **Myspoti**)! SpotCore builds on their browser bridge and Spotify API mappings. You’ll find the credits and license details in [third-party notices](THIRD-PARTY-NOTICES.md). Also an **honourable mention to [librespot](https://github.com/librespot-org/librespot)** and its contributors.

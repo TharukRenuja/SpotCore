@@ -854,12 +854,27 @@ impl HostLauncher {
     }
 
     pub async fn login(self) -> Result<(), Error> {
+        self.login_with(async |_| Ok(())).await
+    }
+
+    /// Verifies the managed login, then calls the application before closing its window.
+    /// Save credentials in `finish`. If it fails, report the error to the user;
+    /// the window stays open until they close it. The callback is not retried.
+    pub async fn login_with<T, F>(self, finish: F) -> Result<T, Error>
+    where
+        F: std::ops::AsyncFnOnce(crate::Api) -> Result<T, Error>,
+    {
         let (host, _) = self.resolve_host()?;
-        let profile = self
-            .profile_dir
-            .clone()
-            .unwrap_or(self.root()?.join("profile"));
-        login_interactive_named(Some(&host), Some(&profile), &self.application_name).await
+        let root = self.root()?;
+        let profile = self.profile_dir.clone().unwrap_or(root.join("profile"));
+        login_interactive_named(
+            Some(&host),
+            Some(&profile),
+            &self.application_name,
+            &root,
+            finish,
+        )
+        .await
     }
 
     /// WKWebView stores account data outside the profile directory; remove its named store first.
@@ -1338,70 +1353,300 @@ pub async fn login_interactive(
     host_path: Option<&Path>,
     profile_dir: Option<&Path>,
 ) -> Result<(), Error> {
-    login_interactive_named(host_path, profile_dir, "SpotCore").await
+    let root = spotcore_core::Paths::discover()?;
+    login_interactive_named(
+        host_path,
+        profile_dir,
+        "SpotCore",
+        root.root(),
+        async |_| Ok(()),
+    )
+    .await
 }
 
-async fn login_interactive_named(
+const LOGIN_URL: &str =
+    "https://accounts.spotify.com/login?continue=https%3A%2F%2Fopen.spotify.com%2F";
+
+fn login_bounds(screen: &serde_json::Value) -> Option<serde_json::Value> {
+    let available_width = screen["width"].as_i64()?.clamp(1, 100_000);
+    let available_height = screen["height"].as_i64()?.clamp(1, 100_000);
+    let width = (available_width - 32).clamp(1, 520);
+    let height = (available_height - 32).clamp(1, 720);
+    Some(serde_json::json!({
+        "left": screen["left"].as_i64().unwrap_or(0) + (available_width - width) / 2,
+        "top": screen["top"].as_i64().unwrap_or(0) + (available_height - height) / 2,
+        "width": width, "height": height, "windowState":"normal"
+    }))
+}
+
+async fn position_login(cdp: &crate::cdp::Cdp) {
+    let _ = tokio::time::timeout(Duration::from_secs(3), async {
+        let window = cdp.request("Browser.getWindowForTarget", serde_json::json!({})).await?;
+        let screen = cdp.request("Runtime.evaluate", serde_json::json!({
+            "expression":"({left:screen.availLeft||0,top:screen.availTop||0,width:screen.availWidth,height:screen.availHeight})",
+            "returnByValue":true
+        })).await?;
+        if let (Some(window_id), Some(bounds)) = (window["windowId"].as_i64(), login_bounds(&screen["result"]["value"])) {
+            cdp.request("Browser.setWindowBounds", serde_json::json!({"windowId":window_id,"bounds":bounds})).await?;
+        }
+        Ok::<_, Error>(())
+    }).await;
+}
+
+async fn login_interactive_named<T, F>(
     host_path: Option<&Path>,
     profile_dir: Option<&Path>,
     application_name: &str,
-) -> Result<(), Error> {
+    root: &Path,
+    finish: F,
+) -> Result<T, Error>
+where
+    F: std::ops::AsyncFnOnce(crate::Api) -> Result<T, Error>,
+{
     let host_bin = host_path
         .map(PathBuf::from)
         .or_else(find_host)
         .or_else(find_system_browser)
         .ok_or_else(|| {
-            Error::Backend("no spotcore-engine or Chromium browser found for login.".into())
+            Error::Backend("no spotcore-engine or Chromium browser found for login".into())
         })?;
-
     let profile = profile_dir
         .map(PathBuf::from)
         .unwrap_or_else(default_profile_dir);
-
+    spotcore_core::Paths::new(&profile)
+        .prepare()
+        .map_err(|_| Error::Backend("cannot prepare the isolated login profile".into()))?;
     let is_engine = host_bin
         .file_name()
-        .and_then(|n| n.to_str())
-        .is_some_and(|n| n.contains("spotcore"));
-
-    let mut cmd = engine_command(&host_bin, spotcore_core::Paths::discover()?.root())?;
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.contains("spotcore"));
+    let port = find_free_port()?;
+    let mut cmd = engine_command(&host_bin, root)?;
     cmd.env("SPOTCORE_APP_NAME", application_name);
     if is_engine {
-        cmd.arg("--login");
-        cmd.arg("--profile-dir").arg(&profile);
+        cmd.args(["--login", "--verified-login", "--profile-dir"])
+            .arg(&profile)
+            .arg("--cdp-port")
+            .arg(port.to_string());
     } else {
-        cmd.arg(format!("--user-data-dir={}", profile.display()));
-        cmd.arg("https://accounts.spotify.com/login");
+        cmd.arg(format!("--user-data-dir={}", profile.display()))
+            .arg(format!("--remote-debugging-port={port}"))
+            .args([
+                "--remote-debugging-address=127.0.0.1",
+                "--no-first-run",
+                "--no-default-browser-check",
+                "--window-size=520,720",
+            ])
+            .arg(format!("--app={LOGIN_URL}"));
     }
-
-    cmd.kill_on_drop(true);
-    cmd.stdin(Stdio::null());
-    cmd.stdout(Stdio::inherit());
-    cmd.stderr(Stdio::inherit());
-
-    let mut child = cmd.spawn().map_err(|e| {
-        Error::Backend(format!(
-            "failed to spawn login window ({}): {e}",
-            host_bin.display()
-        ))
-    })?;
-
-    let status = child
-        .wait()
+    cmd.kill_on_drop(true)
+        .stdin(if is_engine {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
+        .stdout(Stdio::null())
+        .stderr(Stdio::inherit());
+    let mut child = cmd
+        .spawn()
+        .map_err(|_| Error::Backend("failed to spawn the managed login window".into()))?;
+    let endpoint = format!("http://127.0.0.1:{port}");
+    let cdp = loop {
+        if child.try_wait().map_err(|_| Error::Disconnected)?.is_some() {
+            return Err(Error::NotAuthenticated);
+        }
+        if let Ok(Ok(cdp)) = tokio::time::timeout(
+            Duration::from_secs(2),
+            crate::cdp::Cdp::connect_login(&endpoint),
+        )
         .await
-        .map_err(|e| Error::Backend(format!("login process error: {e}")))?;
+        {
+            break cdp;
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    };
+    position_login(&cdp).await;
+    let api = loop {
+        if child.try_wait().map_err(|_| Error::Disconnected)?.is_some() {
+            return Err(Error::NotAuthenticated);
+        }
+        let verified = tokio::time::timeout(Duration::from_secs(10), async {
+            let cookie = cdp.session_cookie().await?;
+            let api = crate::Api::from_cookie(cookie, &spotcore_core::Paths::new(root))?;
+            api.users().me().await?;
+            Ok::<_, Error>(api)
+        })
+        .await;
+        if let Ok(Ok(api)) = verified {
+            break api;
+        }
+        tokio::time::sleep(Duration::from_secs(2)).await;
+    };
+    finish_login(&mut child, &cdp, api, finish).await
+}
 
-    if status.success() {
-        Ok(())
-    } else {
-        Err(Error::Backend(format!(
-            "login process exited with status: {:?}",
-            status.code()
-        )))
+async fn finish_login<T, F>(
+    child: &mut Child,
+    cdp: &crate::cdp::Cdp,
+    api: crate::Api,
+    finish: F,
+) -> Result<T, Error>
+where
+    F: std::ops::AsyncFnOnce(crate::Api) -> Result<T, Error>,
+{
+    let result = finish(api).await;
+    if result.is_err() {
+        // Credential-store failures must not close the user's login window or retry a write.
+        child.wait().await.map_err(|_| Error::Disconnected)?;
+        return result;
     }
+    if let Some(input) = child.stdin.as_mut() {
+        use tokio::io::AsyncWriteExt;
+        let _ = input.write_all(b"complete\n").await;
+    }
+    let _ = tokio::time::timeout(
+        Duration::from_secs(5),
+        cdp.request("Browser.close", serde_json::json!({})),
+    )
+    .await;
+    match tokio::time::timeout(Duration::from_secs(10), child.wait()).await {
+        Ok(waited) => {
+            waited.map_err(|_| Error::Disconnected)?;
+        }
+        Err(_) => {
+            // Preserve the saved account and wait for manual close if graceful shutdown was rejected.
+            child.wait().await.map_err(|_| Error::Disconnected)?;
+        }
+    }
+    result
 }
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
+    async fn login_protocol(
+        log: std::sync::Arc<std::sync::Mutex<Vec<&'static str>>>,
+    ) -> crate::cdp::Cdp {
+        use futures_util::{SinkExt, StreamExt};
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio_tungstenite::tungstenite::Message;
+        let http = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let ws = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}", http.local_addr().unwrap());
+        let websocket = format!("ws://{}/devtools/page/login", ws.local_addr().unwrap());
+        tokio::spawn(async move {
+            let (mut stream, _) = http.accept().await.unwrap();
+            let mut buffer = [0; 4096];
+            stream.read(&mut buffer).await.unwrap();
+            let body = serde_json::json!([{"id":"login","type":"page","url":"https://accounts.spotify.com/login","webSocketDebuggerUrl":websocket}]).to_string();
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            stream.write_all(response.as_bytes()).await.unwrap();
+        });
+        tokio::spawn(async move {
+            let (stream, _) = ws.accept().await.unwrap();
+            let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+            while let Some(Ok(Message::Text(text))) = socket.next().await {
+                let packet: serde_json::Value = serde_json::from_str(&text).unwrap();
+                if packet["method"] == "Browser.close" {
+                    log.lock().unwrap().push("close");
+                }
+                let reply = serde_json::json!({"id":packet["id"],"result":{}});
+                if socket
+                    .send(Message::Text(reply.to_string().into()))
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        });
+        crate::cdp::Cdp::connect_login(&endpoint).await.unwrap()
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn managed_login_closes_only_after_the_save_callback_succeeds() {
+        let log = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let cdp = login_protocol(log.clone()).await;
+        let mut child = tokio::process::Command::new("/bin/sh")
+            .args(["-c", "read completion; test \"$completion\" = complete"])
+            .stdin(Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        let api = crate::Api::from_cookie(
+            "test-cookie",
+            &spotcore_core::Paths::new(scratch("login-save")),
+        )
+        .unwrap();
+        let result = finish_login(&mut child, &cdp, api, async |_| {
+            log.lock().unwrap().push("saved");
+            Ok(())
+        })
+        .await;
+        assert!(result.is_ok());
+        assert_eq!(*log.lock().unwrap(), ["saved", "close"]);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn managed_login_does_not_close_or_retry_after_a_save_failure() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let log = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let cdp = login_protocol(log.clone()).await;
+        let mut child = tokio::process::Command::new("/bin/sh")
+            .args(["-c", "read completion; exit 0"])
+            .stdin(Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        let input = child.stdin.take().unwrap();
+        let (saved, failed) = tokio::sync::oneshot::channel();
+        let ended = AtomicBool::new(false);
+        let api = crate::Api::from_cookie(
+            "test-cookie",
+            &spotcore_core::Paths::new(scratch("login-save-failure")),
+        )
+        .unwrap();
+        let operation = async {
+            let result: Result<(), Error> = finish_login(&mut child, &cdp, api, async |_| {
+                log.lock().unwrap().push("save failed");
+                saved.send(()).unwrap();
+                Err(Error::Backend("credential store unavailable".into()))
+            })
+            .await;
+            ended.store(true, Ordering::SeqCst);
+            result
+        };
+        let manual_close = async {
+            failed.await.unwrap();
+            assert!(!ended.load(Ordering::SeqCst));
+            assert_eq!(*log.lock().unwrap(), ["save failed"]);
+            drop(input);
+        };
+        let (result, _) = tokio::join!(operation, manual_close);
+        assert!(result.is_err());
+        assert_eq!(*log.lock().unwrap(), ["save failed"]);
+    }
+
+    #[test]
+    fn login_window_is_centred_and_clamped_to_its_screen() {
+        let bounds =
+            login_bounds(&serde_json::json!({"left":-1920,"top":0,"width":1920,"height":1080}))
+                .unwrap();
+        assert_eq!(bounds["left"], -1220);
+        assert_eq!(bounds["top"], 180);
+        assert_eq!(bounds["width"], 520);
+        assert_eq!(bounds["height"], 720);
+        let small = login_bounds(&serde_json::json!({"width":400,"height":600})).unwrap();
+        assert_eq!(small["width"], 368);
+        assert_eq!(small["height"], 568);
+        assert!(login_bounds(&serde_json::json!({})).is_none());
+    }
+
     #[test]
     fn embedded_launcher_routing_honours_explicit_overrides() {
         const MODE: &str = "SPOTCORE_EMBEDDED_LAUNCHER_TEST";

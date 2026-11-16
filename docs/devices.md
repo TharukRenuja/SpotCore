@@ -19,7 +19,7 @@ Device models expose identity, active/local flags, volume, restriction and quali
 
 ## Transfer or target
 
-`devices().transfer(device_id, play)` transfers the session and optionally starts playback. `pull_here()` requires a local browser playback device; cookie-only HTTP has no local receiver to pull to.
+`devices().transfer(device_id, play)` transfers the session and optionally starts playback. `pull_here()` requires a local browser playback device. Cookie-only HTTP has no local receiver to pull to.
 
 `play_on(device_id, uri)` starts content on that receiver, which may become active. `execute_on(device_id, command)` sends supported Connect controls directly without pulling playback into SpotCore. These use HTTP even when a Web session is attached.
 
@@ -43,16 +43,16 @@ async fn quality(spotify: &SpotCore) -> Result<(), spotcore::Error> {
 
 Quality settings depend on device/account support and do not measure delivered audio. A later `spotify.set_quality()` targets the SDK-selected backend, not necessarily the device most recently passed to `play_on()`.
 
-In cookie-backed Services mode, ordinary controls act on an existing active receiver. No receiver means no local playback; handle `Disconnected`, `Unsupported` or the returned backend error rather than assuming a transfer succeeded.
+In cookie-backed Services mode, ordinary controls act on an existing active receiver. No receiver means no local playback. Handle `Disconnected`, `Unsupported` or the returned backend error rather than assuming a transfer succeeded.
 
 ## Devices method reference
 
-Receiver arguments are omitted. `Value` means `serde_json::Value`; the return column includes the complete `Result` type.
+Receiver arguments are omitted. `Value` means `serde_json::Value`. The return column includes the complete `Result` type.
 
 | Method and inputs | Returns | Behavior |
 | --- | --- | --- |
 | `list()` | `Result<Vec<Device>, Error>` | Discover Connect devices for the account. |
 | `audio_quality(device: &Device)` | `Result<AudioQuality, Error>` | Read the reported device-quality setting. |
-| `set_audio_quality(device: &Device, quality: AudioQuality)` | `Result<AudioQuality, Error>` | Write the setting then read it back; not stream measurement. |
+| `set_audio_quality(device: &Device, quality: AudioQuality)` | `Result<AudioQuality, Error>` | Write the setting then read it back. Not stream measurement. |
 | `transfer(device_id: &str, play: bool)` | `Result<Value, Error>` | Transfer playback to a receiver, optionally starting it. |
-| `pull_here()` | `Result<Value, Error>` | Transfer to the local browser receiver; no local HTTP-only receiver exists. |
+| `pull_here()` | `Result<Value, Error>` | Transfer to the local browser receiver. No local HTTP-only receiver exists. |
