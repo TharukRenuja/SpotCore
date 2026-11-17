@@ -363,12 +363,22 @@ fn session_id(body: &Value) -> Result<&str, Error> {
         .filter(|id| !id.is_empty())
         .ok_or_else(|| Error::Backend("no active Jam session".into()))
 }
-fn jam_join_url(token: &str, device: &str) -> String {
-    format!(
-        "{SOCIAL}/v2/sessions/join/{}?playback_control=listen_and_control&join_type=link&local_device_id={}",
+fn jam_join_url(token: &str, device: Option<&str>, listen_and_control: bool) -> String {
+    let playback = if listen_and_control {
+        "listen_and_control"
+    } else {
+        "control"
+    };
+    let mut url = format!(
+        "{SOCIAL}/v2/sessions/join/{}?playback_control={}&join_type=deeplinking",
         segment(token),
-        segment(device)
-    )
+        playback
+    );
+    if let Some(device) = device {
+        url.push_str("&local_device_id=");
+        url.push_str(&segment(device));
+    }
+    url
 }
 async fn jam_device(api: &Api) -> Result<String, Error> {
     let cluster = cluster(api).await?;
@@ -430,9 +440,19 @@ async fn jam(api: &Api, method: &str, args: &[Value]) -> Result<Value, Error> {
         }
         "joinSession" => {
             let token = arg(args, 0)?;
-            let device = jam_device(api).await?;
-            api.request("POST", &jam_join_url(token, &device), None)
+            let device = jam_device(api).await.ok();
+            // An unreadable profile means an unknown tier, which joins like Free.
+            let listen_and_control = api
+                .users()
+                .me()
                 .await
+                .is_ok_and(|account| account.tier == spotcore_auth::AccountTier::Premium);
+            api.request(
+                "POST",
+                &jam_join_url(token, device.as_deref(), listen_and_control),
+                None,
+            )
+            .await
         }
         "leaveSession" | "deleteSession" => {
             let current = jam_session(api).await?;
@@ -975,7 +995,14 @@ mod tests {
         );
         assert_eq!(session_id(&json!({"session_id":"abc"})).unwrap(), "abc");
         assert!(session_id(&json!({"session":null})).is_err());
-        let url = jam_join_url("a/b c", "dev-1");
-        assert!(url.ends_with("/join/a%2Fb%20c?playback_control=listen_and_control&join_type=link&local_device_id=dev-1"));
+        let url = jam_join_url("a/b c", Some("dev-1"), false);
+        assert!(url.ends_with(
+            "/join/a%2Fb%20c?playback_control=control&join_type=deeplinking&local_device_id=dev-1"
+        ));
+        let url = jam_join_url("tok", None, false);
+        assert!(url.ends_with("/join/tok?playback_control=control&join_type=deeplinking"));
+        assert!(!url.contains("local_device_id"));
+        let url = jam_join_url("tok", Some("dev-1"), true);
+        assert!(url.ends_with("/join/tok?playback_control=listen_and_control&join_type=deeplinking&local_device_id=dev-1"));
     }
 }

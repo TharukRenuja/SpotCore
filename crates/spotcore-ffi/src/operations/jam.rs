@@ -52,6 +52,15 @@ pub(super) async fn call(
             empty(arguments)?;
             encode(sdk.jam().session().await?)
         }
+        "session_info" => {
+            #[derive(serde::Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Args {
+                token: String,
+            }
+            let p: Args = parse(arguments)?;
+            encode(sdk.jam().session_info(&p.token).await?)
+        }
         "set_participant_volume_control" => {
             #[derive(serde::Deserialize)]
             #[serde(deny_unknown_fields)]

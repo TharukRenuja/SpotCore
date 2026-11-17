@@ -701,12 +701,25 @@ impl Jam<'_> {
         }
         service(self.0, "SocialConnectAPI", "createSession", vec![]).await
     }
+    /// Join a Jam as a guest. Accepts an invite link, a `spotify:socialsession:`
+    /// URI, or a bare join token.
     pub async fn join(&self, token: &str) -> Result<Value, Error> {
-        nonempty(token)?;
+        let token = jam_token(token)?;
         service(
             self.0,
             "SocialConnectAPI",
             "joinSession",
+            vec![json!(token)],
+        )
+        .await
+    }
+    /// Preview the Jam behind an invite link or token without joining it.
+    pub async fn session_info(&self, token: &str) -> Result<Value, Error> {
+        let token = jam_token(token)?;
+        service(
+            self.0,
+            "SocialConnectAPI",
+            "getSessionInfo",
             vec![json!(token)],
         )
         .await
@@ -836,6 +849,31 @@ impl Blends<'_> {
             .await
     }
 }
+/// Resolve an invite link or `spotify:socialsession:` URI to its join token.
+/// Bare tokens pass through after a non-empty check.
+fn jam_token(value: &str) -> Result<String, Error> {
+    let value = value.trim();
+    let token = if let Some(id) = value.strip_prefix("spotify:socialsession:") {
+        id.to_owned()
+    } else if let Ok(url) = url::Url::parse(value) {
+        if url.scheme() != "https" || url.host_str() != Some("open.spotify.com") {
+            return Err(Error::InvalidInput("invalid Jam invitation URL"));
+        }
+        let parts: Vec<_> = url
+            .path_segments()
+            .ok_or(Error::InvalidInput("invalid Jam invitation URL"))?
+            .collect();
+        match parts.as_slice() {
+            ["socialsession", id] | ["socialsession", id, ""] => (*id).to_owned(),
+            _ => return Err(Error::InvalidInput("invalid Jam invitation path")),
+        }
+    } else {
+        value.to_owned()
+    };
+    nonempty(&token)?;
+    Ok(token)
+}
+
 fn blend_id(value: &str) -> Result<String, Error> {
     let value = value.trim();
     let id = if let Ok(url) = url::Url::parse(value) {
@@ -879,6 +917,33 @@ mod tests {
 
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn jam_token_accepts_links_uris_and_bare_tokens() {
+        assert_eq!(
+            jam_token("https://open.spotify.com/socialsession/abc123").unwrap(),
+            "abc123"
+        );
+        assert_eq!(
+            jam_token("https://open.spotify.com/socialsession/abc123/").unwrap(),
+            "abc123"
+        );
+        assert_eq!(jam_token("spotify:socialsession:abc123").unwrap(), "abc123");
+        assert_eq!(jam_token("  abc123  ").unwrap(), "abc123");
+    }
+
+    #[test]
+    fn jam_token_rejects_wrong_host_scheme_and_path() {
+        for bad in [
+            "http://open.spotify.com/socialsession/abc123",
+            "https://evil.example/socialsession/abc123",
+            "https://open.spotify.com/jam/context/abc123",
+            "https://open.spotify.com/socialsession/abc123/extra",
+            " ",
+        ] {
+            assert!(jam_token(bad).is_err(), "{bad:?} was accepted");
+        }
+    }
 
     #[test]
     fn queue_metadata_hydration_preserves_duplicate_identity() {

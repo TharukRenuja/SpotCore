@@ -49,9 +49,24 @@ async fn host_jam(spotify: &SpotCore) -> Result<(), spotcore::Error> {
 
 Keep the Jam active while sharing. Call `jam().end().await?` when the host chooses to end it. Avoid starting a new Jam over an unrelated existing session: read `session()` first in production UI.
 
-**Host workflow:** start a Jam, read the current session, generate its HTTPS invite, and end it when the host chooses. Invites use the current device's session and reject mismatched session IDs. Guests should open invites in Spotify's official app.
+**Host workflow:** start a Jam, read the current session, generate its HTTPS invite, and end it when the host chooses. Invites use the current device's session and reject mismatched session IDs.
 
-**Guest joining through SpotCore is unsupported.** Spotify can reject it with HTTP 411 or 403 `USER_NOT_ALLOWED`. Do not build a guest-join flow around the exposed method.
+## Join a Jam as a guest
+
+A guest joins with the token from a host's invite. Pass the full `https://open.spotify.com/socialsession/<token>` link, a `spotify:socialsession:<token>` URI, or the bare token to `jam().join()`. The SDK reads the signed-in account's tier and sends the token to Spotify's session-join endpoint as a deeplinking join. A Premium guest requests `listen_and_control` playback and can play on their own device; a Free or unknown-tier guest requests `control` playback, joining and adding to the queue while audio plays on the host's device. When the guest account has a receiver, the SDK includes its device id; otherwise the join omits it. The joining account must be different from the host.
+
+```rust
+use spotcore::SpotCore;
+
+async fn join_jam(spotify: &SpotCore, invite: &str) -> Result<(), spotcore::Error> {
+    let info = spotify.jam().session_info(invite).await?;
+    println!("Joining {}", info["session_id"]);
+    spotify.jam().join(invite).await?;
+    Ok(())
+}
+```
+
+Call `session_info()` first to preview the Jam and confirm the invite is still valid. Read `session()` after joining to confirm the guest now has an active Jam. Spotify can still reject a join with HTTP 403 `USER_NOT_ALLOWED` for account, region or eligibility rules; treat a rejection as terminal rather than retrying. Guest track control remains unverified across accounts. Never publish private invite tokens in logs.
 
 `availability()` returns client configuration (`ENABLED`), not server-confirmed hosting eligibility. When no Jam is active, `session()` returns `null` without an error. This lookup is per-device, not an account-wide session index.
 
@@ -111,7 +126,8 @@ Receiver arguments are omitted. `Value` means `serde_json::Value`. The return co
 | `availability()` | `Result<Value, Error>` | Return client configuration, not server-confirmed account eligibility. |
 | `session()` | `Result<Value, Error>` | Read the selected device’s Jam, or null when absent. |
 | `start()` | `Result<Value, Error>` | Request hosting. Premium and a Connect receiver are required. |
-| `join(token: &str)` | `Result<Value, Error>` | Consume an invitation. Jam joining is not verified/supported. |
+| `join(token: &str)` | `Result<Value, Error>` | Join as a guest from an invite link, `spotify:socialsession:` URI or bare token. No Premium or receiver needed; the joining account must differ from the host. |
+| `session_info(token: &str)` | `Result<Value, Error>` | Preview a Jam from its invite link or token without joining. |
 | `leave()` | `Result<Value, Error>` | Request guest leave. Not live-verified. |
 | `end()` | `Result<Value, Error>` | End a hosted Jam. Read the session afterward to confirm it ended. |
 | `invite_link(session_id: &str)` | `Result<Value, Error>` | Generate a shareable URL for the matching current Jam. |
@@ -139,4 +155,4 @@ Receiver arguments are omitted. `Value` means `serde_json::Value`. The return co
 
 Extras typically take track URIs for lyrics/canvas/credits. Taste exclusions and artist-ban methods write Spotify collection preferences. They do not filter the SDK’s local output or guarantee every receiver enforces them immediately.
 
-Blend invitation methods take the supported invitation URL/ID form. Group/story, rename and leave take the Blend playlist URI. Jam `join` expects a join token, not an entire redirect URL. It remains unverified/unsupported. Never publish private invite tokens in logs. Read the current session before host mutations.
+Blend invitation methods take the supported invitation URL/ID form. Group/story, rename and leave take the Blend playlist URI. Jam `join` and `session_info` accept a `https://open.spotify.com/socialsession/<token>` link, a `spotify:socialsession:<token>` URI or a bare token; short `spotify.link` URLs must be resolved to that form first. Never publish private invite tokens in logs. Read the current session before host mutations.

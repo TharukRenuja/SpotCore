@@ -460,6 +460,13 @@
     "result": "Value"
   },
   {
+    "operation": "jam.session_info",
+    "arguments": {
+      "token": "String"
+    },
+    "result": "Value"
+  },
+  {
     "operation": "jam.set_participant_volume_control",
     "arguments": {
       "enabled": "bool"

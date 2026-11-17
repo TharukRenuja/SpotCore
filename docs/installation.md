@@ -43,7 +43,6 @@ Build language bindings and the launcher separately for the target platform. See
 ## Known limitations
 
 - Managed native startup can fall back to Web despite standalone Soloist working. Inspect `native_fallback_reason()`. Successful native playback is not promised for every account/platform.
-- Jam hosting and invites require Premium and an available Connect receiver. Guest joining through the SDK remains unsupported.
 - Handle recommendation rate limits. `radio_blend()` combines separate radios rather than calling an equivalent multi-seed server endpoint.
 - Catalog availability and controls depend on region, tier and device permission. Some advanced domain responses remain JSON.
 - Windows/macOS CI builds and synthetic helper checks do not establish real-account DRM or audible playback. Linux observations are not a memory guarantee.

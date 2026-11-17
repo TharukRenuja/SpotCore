@@ -6,7 +6,7 @@ Use `invoke(operation, arguments_json)` on a language session. Arguments are a J
 
 Direct duration arguments (`position`, `amount`) are integer **milliseconds**. `Command` arguments use the Rust externally tagged enum encoding. A nested `Duration` inside a command is `{"secs":30,"nanos":0}`. Prefer the named seek/rewind/context operations for millisecond arguments. `Paging` is `{"limit":20,"offset":0}`. Optional arguments may be omitted or null. JPEG covers are arrays of byte values, or null to remove a cover. Enum strings use Rust variant names: `Tracks`, `ShortTerm`, `Public`, `VeryHigh`, `Smart`, `Off`, etc. See the category guides for permissions, response types and feature limitations.
 
-**Account and backend restrictions still apply.** Guest joining through `jam.join` is unsupported. Use the session lifecycle methods for login, shutdown and event consumption. Worker events are not fetched through `invoke`.
+**Account and backend restrictions still apply.** `jam.join` accepts an invite link, `spotify:socialsession:` URI or bare token. Free guests join and queue with audio on the host's device; Premium guests can play on their own. The joining account must differ from the host. Use the session lifecycle methods for login, shutdown and event consumption. Worker events are not fetched through `invoke`.
 ## Blends
 
 | Operation | Arguments | Result |
@@ -100,6 +100,7 @@ Direct duration arguments (`position`, `amount`) are integer **milliseconds**. `
 | `jam.leave` | `{}` | `Value` |
 | `jam.remove_member` | `value: String` | `Value` |
 | `jam.session` | `{}` | `Value` |
+| `jam.session_info` | `token: String` | `Value` |
 | `jam.set_participant_volume_control` | `enabled: bool` | `Value` |
 | `jam.set_queue_only` | `enabled: bool` | `Value` |
 | `jam.start` | `{}` | `Value` |
