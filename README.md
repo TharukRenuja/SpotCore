@@ -86,7 +86,7 @@ Use `BrowserRole::Services` for data and remote control without starting a brows
 | Playback events | **Web and native sessions.** Services-only apps poll state. |
 | Audio quality | **Web: up to VeryHigh. Native: device/account-supported levels.** A selected preference does not prove delivered audio quality. |
 | Host a Jam, share an invite and end it | **Yes, with Premium and an available Connect receiver.** Soloist can be the receiver. |
-| Join a Jam as a guest | **Unsupported through SpotCore.** Use Spotify's official app. |
+| Join a Jam as a guest | **Yes.** Free guests can join and queue; audio plays on the host's device. |
 | Download tracks or listen offline | **No.** SpotCore supports streaming only. |
 
 ### Free or Premium?
