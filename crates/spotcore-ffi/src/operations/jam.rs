@@ -35,6 +35,16 @@ pub(super) async fn call(
             let p: Args = parse(arguments)?;
             encode(sdk.jam().join(&p.token).await?)
         }
+        "join_as" => {
+            #[derive(serde::Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Args {
+                token: String,
+                listen_on_device: bool,
+            }
+            let p: Args = parse(arguments)?;
+            encode(sdk.jam().join_as(&p.token, p.listen_on_device).await?)
+        }
         "leave" => {
             empty(arguments)?;
             encode(sdk.jam().leave().await?)

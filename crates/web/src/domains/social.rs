@@ -713,6 +713,19 @@ impl Jam<'_> {
         )
         .await
     }
+    /// Join a Jam as a guest with an explicit playback target.
+    /// `listen_on_device` asks to play on this account's own device instead of
+    /// the host's; Spotify rejects it for accounts that may not use it.
+    pub async fn join_as(&self, token: &str, listen_on_device: bool) -> Result<Value, Error> {
+        let token = jam_token(token)?;
+        service(
+            self.0,
+            "SocialConnectAPI",
+            "joinSession",
+            vec![json!(token), json!(listen_on_device)],
+        )
+        .await
+    }
     /// Preview the Jam behind an invite link or token without joining it.
     pub async fn session_info(&self, token: &str) -> Result<Value, Error> {
         let token = jam_token(token)?;

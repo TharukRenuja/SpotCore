@@ -443,6 +443,14 @@
     "result": "Value"
   },
   {
+    "operation": "jam.join_as",
+    "arguments": {
+      "token": "String",
+      "listen_on_device": "bool"
+    },
+    "result": "Value"
+  },
+  {
     "operation": "jam.leave",
     "arguments": {},
     "result": "Value"

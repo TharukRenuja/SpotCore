@@ -55,6 +55,8 @@ Keep the Jam active while sharing. Call `jam().end().await?` when the host choos
 
 A guest joins with the token from a host's invite. Pass the full `https://open.spotify.com/socialsession/<token>` link, a `spotify:socialsession:<token>` URI, or the bare token to `jam().join()`. The SDK reads the signed-in account's tier and sends the token to Spotify's session-join endpoint as a deeplinking join. A Premium guest requests `listen_and_control` playback and can play on their own device; a Free or unknown-tier guest requests `control` playback, joining and adding to the queue while audio plays on the host's device. When the guest account has a receiver, the SDK includes its device id; otherwise the join omits it. The joining account must be different from the host.
 
+`jam().join_as(token, listen_on_device)` makes that choice explicit for an interface that offers both targets. Pass `true` to ask for playback on this account's own device, or `false` for the host's device. Spotify still decides whether the account may use `listen_and_control`, so a Free account asking for its own device is rejected. Short `spotify.link` invites redirect to the `open.spotify.com/socialsession` form and must be resolved before either method.
+
 ```rust
 use spotcore::SpotCore;
 
@@ -70,7 +72,7 @@ Call `session_info()` first to preview the Jam and confirm the invite is still v
 
 `availability()` returns client configuration (`ENABLED`), not server-confirmed hosting eligibility. When no Jam is active, `session()` returns `null` without an error. This lookup is per-device, not an account-wide session index.
 
-`set_queue_only(true)` requests queue-only guest permissions. Pass `false` to request playback controls again. `set_participant_volume_control` and `remove_member` request guest volume permissions and participant removal. **Verify the resulting session state after guest-control changes.** Guest-control effects and guest leave are not validated across accounts. HTTP mode has no live `session_update` push stream. Soloist supplies a playback receiver. Hosting requests use the service API.
+`set_queue_only(true)` requests queue-only guest permissions. Pass `false` to request playback controls again. `set_participant_volume_control` and `remove_member` request guest volume permissions and participant removal. **Verify the resulting session state after guest-control changes.** Guest-control effects are not validated across accounts. HTTP mode has no live `session_update` push stream. Soloist supplies a playback receiver. Hosting requests use the service API.
 
 ## Extras method reference
 
@@ -126,9 +128,10 @@ Receiver arguments are omitted. `Value` means `serde_json::Value`. The return co
 | `availability()` | `Result<Value, Error>` | Return client configuration, not server-confirmed account eligibility. |
 | `session()` | `Result<Value, Error>` | Read the selected device’s Jam, or null when absent. |
 | `start()` | `Result<Value, Error>` | Request hosting. Premium and a Connect receiver are required. |
-| `join(token: &str)` | `Result<Value, Error>` | Join as a guest from an invite link, `spotify:socialsession:` URI or bare token. No Premium or receiver needed; the joining account must differ from the host. |
+| `join(token: &str)` | `Result<Value, Error>` | Join as a guest from an invite link, `spotify:socialsession:` URI or bare token, choosing playback from the account tier. No Premium or receiver needed; the joining account must differ from the host. |
+| `join_as(token: &str, listen_on_device: bool)` | `Result<Value, Error>` | Join with an explicit playback target: this account's own device or the host's. Spotify rejects `listen_on_device` for accounts that may not use it. |
 | `session_info(token: &str)` | `Result<Value, Error>` | Preview a Jam from its invite link or token without joining. |
-| `leave()` | `Result<Value, Error>` | Request guest leave. Not live-verified. |
+| `leave()` | `Result<Value, Error>` | Leave the current Jam as a guest. |
 | `end()` | `Result<Value, Error>` | End a hosted Jam. Read the session afterward to confirm it ended. |
 | `invite_link(session_id: &str)` | `Result<Value, Error>` | Generate a shareable URL for the matching current Jam. |
 | `remove_member(value: &str)` | `Result<Value, Error>` | Request removal of a participant user URI. Verify the resulting session. |

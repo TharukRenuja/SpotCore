@@ -441,12 +441,15 @@ async fn jam(api: &Api, method: &str, args: &[Value]) -> Result<Value, Error> {
         "joinSession" => {
             let token = arg(args, 0)?;
             let device = jam_device(api).await.ok();
-            // An unreadable profile means an unknown tier, which joins like Free.
-            let listen_and_control = api
-                .users()
-                .me()
-                .await
-                .is_ok_and(|account| account.tier == spotcore_auth::AccountTier::Premium);
+            let listen_and_control = match args.get(1).and_then(Value::as_bool) {
+                Some(requested) => requested,
+                // An unreadable profile means an unknown tier, which joins like Free.
+                None => api
+                    .users()
+                    .me()
+                    .await
+                    .is_ok_and(|account| account.tier == spotcore_auth::AccountTier::Premium),
+            };
             api.request(
                 "POST",
                 &jam_join_url(token, device.as_deref(), listen_and_control),
