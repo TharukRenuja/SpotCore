@@ -1,6 +1,6 @@
 # Installation
 
-**SpotCore source version: 0.1.2. Requires Rust 1.89 or newer.** Build Rust consumers directly from source. Generate language bindings and native libraries for the target OS and architecture.
+**SpotCore source version: 0.1.3. Requires Rust 1.89 or newer.** Build Rust consumers directly from source. Generate language bindings and native libraries for the target OS and architecture.
 
 ## Use a source checkout
 
@@ -21,11 +21,11 @@ Add `features = ["native"]` to compile optional Soloist support. See the [quicks
 
 ## Pin a Git dependency
 
-**Cargo can build a Git dependency without a crates.io publication.** Select a published release tag from the [releases page](https://github.com/TharukRenuja/SpotCore/releases), or pin a full commit with `rev`. For example, with the `v0.1.2` tag published:
+**Cargo can build a Git dependency without a crates.io publication.** Select a published release tag from the [releases page](https://github.com/TharukRenuja/SpotCore/releases), or pin a full commit with `rev`. For example, with the `v0.1.3` tag published:
 
 ```toml
 [dependencies]
-spotcore = { git = "https://github.com/TharukRenuja/SpotCore.git", tag = "v0.1.2", features = ["native"] }
+spotcore = { git = "https://github.com/TharukRenuja/SpotCore.git", tag = "v0.1.3", features = ["native"] }
 ```
 
 The version bump in a checkout does not create that tag. **Use a tag that exists and commit your application's `Cargo.lock`.** Cargo builds the tagged source, including its workspace crates. It does not install binaries attached to a GitHub release. Build or install the launcher and selected engine separately.

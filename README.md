@@ -16,7 +16,7 @@
 
 ```toml
 [dependencies]
-spotcore = { git = "https://github.com/TharukRenuja/SpotCore.git", tag = "v0.1.2" }
+spotcore = { git = "https://github.com/TharukRenuja/SpotCore.git", tag = "v0.1.3" }
 ```
 
 **Use a published tag or pin a full commit with `rev`, then commit your application's `Cargo.lock`.** Version `0.1.2` is the current source version; the version bump alone does not create a tag. Add `features = ["native"]` if your app needs Soloist support. See [installation](docs/installation.md) for a local source dependency and runtime setup.
