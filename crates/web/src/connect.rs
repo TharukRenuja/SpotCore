@@ -289,7 +289,13 @@ fn edit_queue(method: &str, args: &Value, state: &Value) -> Result<Value, Error>
     Ok(json!({"next_tracks":next,"prev_tracks":previous}))
 }
 
-fn command(method: &str, args: &Value, state: &Value) -> Result<(Value, &'static str), Error> {
+/// Builds one Connect player command. `state` is absent when the command goes
+/// to a Jam session instead, whose service enforces the host's permission.
+fn command(
+    method: &str,
+    args: &Value,
+    state: Option<&Value>,
+) -> Result<(Value, &'static str), Error> {
     let mut value = json!({});
     let (endpoint, restriction) = match method {
         "player.pause" => ("pause", "pausing"),
@@ -304,14 +310,16 @@ fn command(method: &str, args: &Value, state: &Value) -> Result<(Value, &'static
                 .as_str()
                 .filter(|uid| !uid.is_empty())
                 .ok_or(Error::InvalidInput("queue item has no uid"))?;
-            let next = rows(state, "next_tracks")?;
-            if !next.iter().any(|row| {
-                row["uri"] == uri
-                    && row["uid"] == uid
-                    && row["metadata"]["hidden"] != "true"
-                    && row["metadata"]["hidden"] != true
-            }) {
-                return Err(Error::InvalidInput("queue occurrence is no longer present"));
+            if let Some(state) = state {
+                let next = rows(state, "next_tracks")?;
+                if !next.iter().any(|row| {
+                    row["uri"] == uri
+                        && row["uid"] == uid
+                        && row["metadata"]["hidden"] != "true"
+                        && row["metadata"]["hidden"] != true
+                }) {
+                    return Err(Error::InvalidInput("queue occurrence is no longer present"));
+                }
             }
             value = json!({"track":{"uri":uri,"uid":uid}});
             ("skip_next", "skipping_next")
@@ -347,7 +355,7 @@ fn command(method: &str, args: &Value, state: &Value) -> Result<(Value, &'static
                 .filter(|m| *m <= 2)
                 .ok_or(Error::InvalidInput("invalid repeat mode"))?;
             value = json!({"repeating_context":mode==1,"repeating_track":mode==2});
-            if denied(state, "toggling_repeat_track") {
+            if state.is_some_and(|state| denied(state, "toggling_repeat_track")) {
                 return Err(Error::Unsupported);
             }
             ("set_options", "toggling_repeat_context")
@@ -418,10 +426,13 @@ fn command(method: &str, args: &Value, state: &Value) -> Result<(Value, &'static
             ("add_to_queue", "inserting_into_next_tracks")
         }
         "queue.insert" | "queue.reorder" | "queue.replace" => {
+            // Queue rewrites always come from Connect, never the Jam route.
+            let state = state.ok_or(Error::Unsupported)?;
             value = edit_queue(method, args, state)?;
             ("set_queue", "setting_queue")
         }
         "queue.clear" | "queue.remove" => {
+            let state = state.ok_or(Error::Unsupported)?;
             let mut next = rows(state, "next_tracks")?;
             let previous = rows(state, "prev_tracks")?;
             if method == "queue.clear" {
@@ -450,7 +461,7 @@ fn command(method: &str, args: &Value, state: &Value) -> Result<(Value, &'static
         }
         _ => return Err(Error::Unsupported),
     };
-    if denied(state, restriction) {
+    if state.is_some_and(|state| denied(state, restriction)) {
         return Err(Error::Unsupported);
     }
     value["endpoint"] = json!(endpoint);
@@ -498,6 +509,24 @@ fn target_state<'a>(cluster: &'a Value, device: &str, method: &str) -> Result<&'
     Ok(&Value::Null)
 }
 
+/// The commands a Jam session takes over from Connect.
+fn jam_redirected(method: &str) -> bool {
+    matches!(
+        method,
+        "player.pause"
+            | "player.resume"
+            | "player.next"
+            | "player.previous"
+            | "player.seek"
+            | "player.play"
+            | "player.setShuffle"
+            | "player.setShuffleMode"
+            | "player.setRepeat"
+            | "player.setSpeed"
+            | "queue.skipTo"
+    )
+}
+
 /// `target` names a Connect device to command without transferring the session.
 pub(crate) async fn call_to(
     api: &Api,
@@ -530,6 +559,19 @@ pub(crate) async fn call_to(
             | "queue.replace"
     ) {
         return Err(Error::Unsupported);
+    }
+    // A Jam takes a guest's transport over through the session service, and
+    // Spotify's receiver refuses the Connect command even when the host allows
+    // control. Obey the session before reading Connect state: its restrictions
+    // and missing device state are exactly what the redirect exists to bypass.
+    if jam_redirected(method)
+        && api.jam_command_device().is_some()
+        && let Ok(session) = direct::jam_current(api).await
+        && direct::jam_redirects(&session)
+    {
+        let (mut value, _) = command(method, &args, None)?;
+        value["logging_params"] = json!({"command_id":uuid::Uuid::new_v4().to_string()});
+        return direct::jam_command(api, &session, &value).await;
     }
     let cluster = direct::cluster(api).await?;
     let state = &cluster["player_state"];
@@ -578,30 +620,8 @@ pub(crate) async fn call_to(
             )
             .await;
     }
-    let (mut value, _) = command(method, &args, state)?;
+    let (mut value, _) = command(method, &args, Some(state))?;
     value["logging_params"] = json!({"command_id":uuid::Uuid::new_v4().to_string()});
-    // A Jam may route transport through the session service; a guest's
-    // Connect command is refused by the receiver even when the host allows
-    // control. The official client obeys the same flag.
-    if matches!(
-        method,
-        "player.pause"
-            | "player.resume"
-            | "player.next"
-            | "player.previous"
-            | "player.seek"
-            | "player.play"
-            | "player.setShuffle"
-            | "player.setShuffleMode"
-            | "player.setRepeat"
-            | "player.setSpeed"
-            | "queue.skipTo"
-    ) && api.jam_command_device().is_some()
-        && let Ok(session) = direct::jam_current(api).await
-        && direct::jam_redirects(&session)
-    {
-        return direct::jam_command(api, &session, &value).await;
-    }
     let response = api
         .request_raw(
             "POST",
@@ -640,7 +660,7 @@ mod tests {
     fn ordered_playback_uses_context_tracks_without_creating_manual_rows() {
         let state = serde_json::json!({"next_tracks":[{"uri":"spotify:track:manual","uid":"manual","metadata":{"is_queued":"true"}}]});
         let args = serde_json::json!({"contextUri":"spotify:playlist:sorted", "order":["spotify:track:b","spotify:track:a","spotify:track:b"], "index":0, "positionMs":1234});
-        let (body, restriction) = super::command("player.play", &args, &state).unwrap();
+        let (body, restriction) = super::command("player.play", &args, Some(&state)).unwrap();
         assert_eq!(restriction, "playing");
         assert_eq!(body["context"]["uri"], "spotify:playlist:sorted");
         assert_eq!(
@@ -660,7 +680,7 @@ mod tests {
         ] {
             let mut invalid = args.clone();
             invalid["order"] = order;
-            assert!(super::command("player.play", &invalid, &state).is_err());
+            assert!(super::command("player.play", &invalid, Some(&state)).is_err());
         }
     }
 
@@ -671,14 +691,14 @@ mod tests {
             {"uri":"spotify:track:same","uid":"second"}
         ]});
         let args = serde_json::json!({"uri":"spotify:track:same","uid":"second"});
-        let (body, _) = super::command("queue.skipTo", &args, &state).unwrap();
+        let (body, _) = super::command("queue.skipTo", &args, Some(&state)).unwrap();
         assert_eq!(body["endpoint"], "skip_next");
         assert_eq!(body["track"]["uid"], "second");
         assert!(
             super::command(
                 "queue.skipTo",
                 &serde_json::json!({"uri":"spotify:track:same","uid":"gone"}),
-                &state
+                Some(&state)
             )
             .is_err()
         );
@@ -702,7 +722,7 @@ mod tests {
         assert_eq!(view["queued"].as_array().unwrap().len(), 2);
         assert_eq!(view["queued"][0]["uid"], "one");
         assert_eq!(view["queued"][1]["uid"], "two");
-        let (edited, _) = command("queue.replace", &json!({"uris":[]}), &state).unwrap();
+        let (edited, _) = command("queue.replace", &json!({"uris":[]}), Some(&state)).unwrap();
         assert_eq!(
             edited["next_tracks"].as_array().unwrap().len(),
             4,
@@ -728,7 +748,7 @@ mod tests {
     #[test]
     fn http_queue_edits_keep_context_ads_and_exact_duplicate_rows() {
         let state = edit_state();
-        let (moved, _) = command("queue.reorder", &json!({"items":[{"uri":"spotify:track:same","uid":"two"}],"before":{"uri":"spotify:track:same","uid":"one"}}), &state).unwrap();
+        let (moved, _) = command("queue.reorder", &json!({"items":[{"uri":"spotify:track:same","uid":"two"}],"before":{"uri":"spotify:track:same","uid":"one"}}), Some(&state)).unwrap();
         assert_eq!(moved["endpoint"], "set_queue");
         assert_eq!(moved["next_tracks"][0]["uid"], "two");
         assert_eq!(moved["next_tracks"][1]["uid"], "one");
@@ -744,7 +764,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(head["next_tracks"][0]["uri"], "spotify:track:new");
-        let (inserted, _) = command("queue.insert", &json!({"uris":["spotify:track:new","spotify:track:new"],"before":{"uri":"spotify:track:same","uid":"two"}}), &state).unwrap();
+        let (inserted, _) = command("queue.insert", &json!({"uris":["spotify:track:new","spotify:track:new"],"before":{"uri":"spotify:track:same","uid":"two"}}), Some(&state)).unwrap();
         assert_eq!(inserted["next_tracks"][0]["uid"], "one");
         assert_eq!(inserted["next_tracks"][3]["uid"], "two");
         assert_ne!(
@@ -834,7 +854,14 @@ mod tests {
         let mut restricted = state.clone();
         restricted["restrictions"] = json!({"disallow_setting_queue_reasons":["restricted"]});
         assert!(command("queue.replace", &json!({"uris":[]}), &restricted).is_err());
-        assert!(command("queue.replace", &json!({"uris":["spotify:ad:ad"]}), &state).is_err());
+        assert!(
+            command(
+                "queue.replace",
+                &json!({"uris":["spotify:ad:ad"]}),
+                Some(&state)
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -879,7 +906,7 @@ mod tests {
                 {"uri":"spotify:track:same","uid":"two"},
                 {"uri":"spotify:ad:advert","uid":"ad","provider":"ad"}
             ],"prev_tracks":[]});
-        let (moved, _) = command("queue.reorder", &json!({"items":[{"uri":"spotify:track:same","uid":"two"}],"before":{"uri":"spotify:track:same","uid":"one"}}), &state).unwrap();
+        let (moved, _) = command("queue.reorder", &json!({"items":[{"uri":"spotify:track:same","uid":"two"}],"before":{"uri":"spotify:track:same","uid":"one"}}), Some(&state)).unwrap();
         assert_eq!(moved["next_tracks"][0]["uid"], "two");
         let (removed, _) = command(
             "queue.remove",
@@ -889,7 +916,7 @@ mod tests {
         .unwrap();
         assert_eq!(removed["next_tracks"].as_array().unwrap().len(), 2);
         assert_eq!(removed["next_tracks"][0]["uid"], "one");
-        let (promoted, _) = command("queue.reorder", &json!({"items":[{"uri":"spotify:track:same","uid":"two"}],"before":{"uri":"spotify:track:same","uid":"one"},"queued":true}), &state).unwrap();
+        let (promoted, _) = command("queue.reorder", &json!({"items":[{"uri":"spotify:track:same","uid":"two"}],"before":{"uri":"spotify:track:same","uid":"one"},"queued":true}), Some(&state)).unwrap();
         assert_eq!(promoted["next_tracks"][0]["metadata"]["is_queued"], "true");
         assert_eq!(promoted["next_tracks"][0]["provider"], "queue");
         let (demoted, _) = command(
@@ -913,7 +940,7 @@ mod tests {
     #[test]
     fn queue_edits_preserve_context_ads_and_exact_identity() {
         let state = json!({"next_tracks":[{"uri":"spotify:track:queued","uid":"q","metadata":{"is_queued":"true"}},{"uri":"spotify:ad:advert","uid":"ad","provider":"ad","metadata":{"is_queued":"true"}},{"uri":"spotify:track:context","uid":"c"}],"prev_tracks":[{"uri":"spotify:track:previous"}]});
-        let (clear, _) = command("queue.clear", &json!({}), &state).unwrap();
+        let (clear, _) = command("queue.clear", &json!({}), Some(&state)).unwrap();
         assert_eq!(clear["next_tracks"].as_array().unwrap().len(), 2);
         assert_eq!(clear["prev_tracks"], state["prev_tracks"]);
         assert!(command("queue.clear", &json!({}), &json!({"next_tracks":[]})).is_err());
@@ -925,7 +952,8 @@ mod tests {
             )
             .is_err()
         );
-        let (smart, _) = command("player.setShuffleMode", &json!({"mode":2}), &state).unwrap();
+        let (smart, _) =
+            command("player.setShuffleMode", &json!({"mode":2}), Some(&state)).unwrap();
         assert_eq!(smart["modes"]["context_enhancement"], "RECOMMENDATION");
         assert_eq!(
             volume_body(&json!({"level":0.5})).unwrap(),
@@ -944,9 +972,45 @@ mod tests {
             command(
                 "player.pause",
                 &json!({}),
-                &json!({"restrictions":{"disallow_pausing_reasons":["ad"]}})
+                Some(&json!({"restrictions":{"disallow_pausing_reasons":["ad"]}}))
             )
             .is_err()
+        );
+    }
+
+    /// The Jam route must build a command without the receiver's state, which
+    /// a guest often cannot read, and must not extend to queue writes.
+    #[test]
+    fn jam_redirected_transport_builds_without_cluster_state() {
+        for method in [
+            "player.pause",
+            "player.resume",
+            "player.next",
+            "player.previous",
+            "player.seek",
+            "player.play",
+            "player.setShuffle",
+            "player.setShuffleMode",
+            "player.setRepeat",
+            "player.setSpeed",
+            "queue.skipTo",
+        ] {
+            assert!(jam_redirected(method), "{method}");
+        }
+        for method in ["queue.add", "queue.clear", "volume.set", "player.state"] {
+            assert!(!jam_redirected(method), "{method}");
+        }
+        let (pause, _) = command("player.pause", &json!({}), None).unwrap();
+        assert_eq!(pause, json!({"endpoint":"pause"}));
+        let (skip, _) = command(
+            "queue.skipTo",
+            &json!({"uri":"spotify:track:one","uid":"one"}),
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            skip,
+            json!({"track":{"uri":"spotify:track:one","uid":"one"},"endpoint":"skip_next"})
         );
     }
 }
