@@ -796,7 +796,7 @@ mod tests {
                 "uris":["spotify:track:new", "spotify:track:new"],
                 "before":anchor, "queued":false
             }),
-            Some(&state),
+            &state,
         )
         .unwrap();
         assert_eq!(inserted["next_tracks"][3]["uri"], "spotify:track:new");
@@ -814,7 +814,7 @@ mod tests {
             &json!({
                 "uris":["spotify:track:new"], "after":anchor, "queued":false
             }),
-            Some(&state),
+            &state,
         )
         .unwrap();
         assert_eq!(appended["next_tracks"][4]["uri"], "spotify:track:new");
@@ -825,7 +825,7 @@ mod tests {
                 &json!({
                     "uris":["spotify:track:new"], "before":anchor, "after":anchor
                 }),
-                Some(&state)
+                &state
             )
             .is_err()
         );
