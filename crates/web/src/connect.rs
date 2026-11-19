@@ -580,6 +580,28 @@ pub(crate) async fn call_to(
     }
     let (mut value, _) = command(method, &args, state)?;
     value["logging_params"] = json!({"command_id":uuid::Uuid::new_v4().to_string()});
+    // A Jam may route transport through the session service; a guest's
+    // Connect command is refused by the receiver even when the host allows
+    // control. The official client obeys the same flag.
+    if matches!(
+        method,
+        "player.pause"
+            | "player.resume"
+            | "player.next"
+            | "player.previous"
+            | "player.seek"
+            | "player.play"
+            | "player.setShuffle"
+            | "player.setShuffleMode"
+            | "player.setRepeat"
+            | "player.setSpeed"
+            | "queue.skipTo"
+    ) && api.jam_command_device().is_some()
+        && let Ok(session) = direct::jam_current(api).await
+        && direct::jam_redirects(&session)
+    {
+        return direct::jam_command(api, &session, &value).await;
+    }
     let response = api
         .request_raw(
             "POST",

@@ -66,6 +66,9 @@ struct Inner {
     media_cache: RwLock<BTreeMap<String, CachedMedia>>,
     schema: Value,
     http: Http,
+    /// The device this account joined a Jam as. Spotify's session service
+    /// accepts a guest's player command from it.
+    jam_command_device: std::sync::Mutex<Option<String>>,
     /// Per-root cache file, so a custom `Paths` keeps its hashes with it.
     cache: PathBuf,
 }
@@ -179,6 +182,7 @@ impl Api {
                 schema: serde_json::from_str(OPERATION_SCHEMA_JSON)
                     .map_err(|_| Error::Backend("invalid bundled operation schema".into()))?,
                 http: Http::new()?,
+                jam_command_device: std::sync::Mutex::new(None),
                 cache,
             }),
         })
@@ -235,6 +239,18 @@ impl Api {
     }
     pub(crate) fn device_id(&self) -> &str {
         self.inner.http.device_id()
+    }
+    pub(crate) fn set_jam_command_device(&self, device: Option<String>) {
+        if let Ok(mut held) = self.inner.jam_command_device.lock() {
+            *held = device;
+        }
+    }
+    pub(crate) fn jam_command_device(&self) -> Option<String> {
+        self.inner
+            .jam_command_device
+            .lock()
+            .ok()
+            .and_then(|held| held.clone())
     }
     pub(crate) fn session_epoch(&self) -> Option<u64> {
         self.inner.browser.as_ref().map(Browser::session_epoch)

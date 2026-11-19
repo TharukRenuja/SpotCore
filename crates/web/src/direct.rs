@@ -406,6 +406,71 @@ async fn jam_session(api: &Api) -> Result<Value, Error> {
         Err(error) => Err(error),
     }
 }
+
+/// The signed-in account's session, the body the official client reads to
+/// decide where its player commands go. A missing session is null.
+pub(crate) async fn jam_current(api: &Api) -> Result<Value, Error> {
+    match api
+        .request("GET", &format!("{SOCIAL}/v2/sessions/current"), None)
+        .await
+    {
+        Ok(body) => Ok(body),
+        Err(Error::Http {
+            status: 404 | 410, ..
+        }) => Ok(Value::Null),
+        Err(error) => Err(error),
+    }
+}
+
+/// Whether the Jam service asks this account to send player commands through
+/// the session. Spotify's receiver refuses a guest's Connect command, so the
+/// session is the path that honors the host's permission.
+pub(crate) fn jam_redirects(session: &Value) -> bool {
+    session["redirectCommands"].as_bool() == Some(true)
+        && session
+            .get("session_id")
+            .or_else(|| session.get("sessionId"))
+            .and_then(Value::as_str)
+            .is_some_and(|id| !id.is_empty())
+}
+
+/// Sends one player command through the Jam service, from the device that
+/// joined the session.
+pub(crate) async fn jam_command(
+    api: &Api,
+    session: &Value,
+    command: &Value,
+) -> Result<Value, Error> {
+    let id = session["session_id"]
+        .as_str()
+        .or_else(|| session["sessionId"].as_str())
+        .filter(|id| !id.is_empty())
+        .ok_or_else(|| Error::Backend("Jam session has no id".into()))?;
+    let from = api
+        .jam_command_device()
+        .unwrap_or_else(|| api.device_id().to_owned());
+    let body = serde_json::to_vec(&json!({"command": command}))
+        .map_err(|_| Error::InvalidInput("invalid Jam command"))?;
+    let response = api
+        .request_raw(
+            "POST",
+            &format!(
+                "{SOCIAL}/v2/sessions/{}/commands/from/{}",
+                segment(id),
+                segment(&from)
+            ),
+            Some(body),
+            "application/json",
+        )
+        .await?;
+    if response.body.is_empty() {
+        Ok(Value::Null)
+    } else {
+        serde_json::from_slice(&response.body).map_err(|_| {
+            Error::Backend("invalid Jam acknowledgement; command outcome unknown".into())
+        })
+    }
+}
 fn jam_invite_credentials<'a>(
     info: &'a Value,
     expected_id: &str,
@@ -450,12 +515,17 @@ async fn jam(api: &Api, method: &str, args: &[Value]) -> Result<Value, Error> {
                     .await
                     .is_ok_and(|account| account.tier == spotcore_auth::AccountTier::Premium),
             };
-            api.request(
-                "POST",
-                &jam_join_url(token, device.as_deref(), listen_and_control),
-                None,
-            )
-            .await
+            let response = api
+                .request(
+                    "POST",
+                    &jam_join_url(token, device.as_deref(), listen_and_control),
+                    None,
+                )
+                .await;
+            if response.is_ok() {
+                api.set_jam_command_device(device);
+            }
+            response
         }
         "leaveSession" | "deleteSession" => {
             let current = jam_session(api).await?;
@@ -492,6 +562,7 @@ async fn jam(api: &Api, method: &str, args: &[Value]) -> Result<Value, Error> {
                     }
                 }
             }
+            api.set_jam_command_device(None);
             Ok(json!(true))
         }
         "getSessionInfo" => {
@@ -1007,5 +1078,15 @@ mod tests {
         assert!(!url.contains("local_device_id"));
         let url = jam_join_url("tok", Some("dev-1"), true);
         assert!(url.ends_with("/join/tok?playback_control=listen_and_control&join_type=deeplinking&local_device_id=dev-1"));
+        assert!(jam_redirects(&json!({
+            "session_id": "s",
+            "redirectCommands": true
+        })));
+        assert!(!jam_redirects(&json!({"session_id": "s"})));
+        assert!(jam_redirects(&json!({
+            "sessionId": "s",
+            "redirectCommands": true
+        })));
+        assert!(!jam_redirects(&Value::Null));
     }
 }
