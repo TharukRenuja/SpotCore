@@ -760,7 +760,7 @@ mod tests {
         let (head, _) = command(
             "queue.insert",
             &json!({"uris":["spotify:track:new"]}),
-            &state,
+            Some(&state),
         )
         .unwrap();
         assert_eq!(head["next_tracks"][0]["uri"], "spotify:track:new");
@@ -774,7 +774,7 @@ mod tests {
         let (replaced, _) = command(
             "queue.replace",
             &json!({"uris":["spotify:track:same","spotify:track:new","spotify:track:same"]}),
-            &state,
+            Some(&state),
         )
         .unwrap();
         assert_eq!(replaced["next_tracks"][0]["uid"], "one");
@@ -796,7 +796,7 @@ mod tests {
                 "uris":["spotify:track:new", "spotify:track:new"],
                 "before":anchor, "queued":false
             }),
-            &state,
+            Some(&state),
         )
         .unwrap();
         assert_eq!(inserted["next_tracks"][3]["uri"], "spotify:track:new");
@@ -814,7 +814,7 @@ mod tests {
             &json!({
                 "uris":["spotify:track:new"], "after":anchor, "queued":false
             }),
-            &state,
+            Some(&state),
         )
         .unwrap();
         assert_eq!(appended["next_tracks"][4]["uri"], "spotify:track:new");
@@ -825,7 +825,7 @@ mod tests {
                 &json!({
                     "uris":["spotify:track:new"], "before":anchor, "after":anchor
                 }),
-                &state
+                Some(&state)
             )
             .is_err()
         );
@@ -839,7 +839,7 @@ mod tests {
             command(
                 "queue.insert",
                 &json!({"uris":["spotify:track:new"],"before":wanted}),
-                &state
+                Some(&state)
             )
             .is_err()
         );
@@ -847,13 +847,13 @@ mod tests {
             command(
                 "queue.reorder",
                 &json!({"items":[state["next_tracks"][0]],"before":state["next_tracks"][0]}),
-                &state
+                Some(&state)
             )
             .is_err()
         );
         let mut restricted = state.clone();
         restricted["restrictions"] = json!({"disallow_setting_queue_reasons":["restricted"]});
-        assert!(command("queue.replace", &json!({"uris":[]}), &restricted).is_err());
+        assert!(command("queue.replace", &json!({"uris":[]}), Some(&restricted)).is_err());
         assert!(
             command(
                 "queue.replace",
@@ -871,10 +871,10 @@ mod tests {
         assert!(target_state(&cluster, "missing", "player.play").is_err());
         assert!(target_state(&cluster, "restricted", "player.play").is_err());
         let active = target_state(&cluster, "a", "player.pause").unwrap();
-        assert!(command("player.pause", &json!({}), active).is_err());
+        assert!(command("player.pause", &json!({}), Some(active)).is_err());
         let other = target_state(&cluster, "b", "player.pause").unwrap();
         assert!(other.is_null());
-        assert!(command("player.pause", &json!({}), other).is_ok());
+        assert!(command("player.pause", &json!({}), Some(other)).is_ok());
         assert!(target_state(&cluster, "b", "queue.clear").is_err());
         assert!(target_state(&cluster, "fixed", "volume.set").is_err());
         assert!(target_state(&cluster, "b", "volume.set").is_ok());
@@ -911,7 +911,7 @@ mod tests {
         let (removed, _) = command(
             "queue.remove",
             &json!({"items":[{"uri":"spotify:track:same","uid":"two"}]}),
-            &state,
+            Some(&state),
         )
         .unwrap();
         assert_eq!(removed["next_tracks"].as_array().unwrap().len(), 2);
@@ -922,7 +922,7 @@ mod tests {
         let (demoted, _) = command(
             "queue.reorder",
             &json!({"items":[{"uri":"spotify:track:same","uid":"two"}],"queued":false}),
-            &promoted,
+            Some(&promoted),
         )
         .unwrap();
         assert_eq!(demoted["next_tracks"][0]["metadata"]["is_queued"], "false");
@@ -931,7 +931,7 @@ mod tests {
             command(
                 "queue.remove",
                 &json!({"items":[{"uri":"spotify:ad:advert","uid":"ad"}]}),
-                &state
+                Some(&state)
             )
             .is_err()
         );
@@ -943,12 +943,12 @@ mod tests {
         let (clear, _) = command("queue.clear", &json!({}), Some(&state)).unwrap();
         assert_eq!(clear["next_tracks"].as_array().unwrap().len(), 2);
         assert_eq!(clear["prev_tracks"], state["prev_tracks"]);
-        assert!(command("queue.clear", &json!({}), &json!({"next_tracks":[]})).is_err());
+        assert!(command("queue.clear", &json!({}), Some(&json!({"next_tracks":[]}))).is_err());
         assert!(
             command(
                 "queue.remove",
                 &json!({"items":[{"uri":"spotify:track:queued"}]}),
-                &state
+                Some(&state)
             )
             .is_err()
         );
