@@ -524,6 +524,7 @@ fn jam_redirected(method: &str) -> bool {
             | "player.setRepeat"
             | "player.setSpeed"
             | "queue.skipTo"
+            | "queue.add"
     )
 }
 
@@ -570,8 +571,9 @@ pub(crate) async fn call_to(
         && let Some(host) = direct::jam_host_device(&session)
         && target == Some(host.as_str())
     {
-        let (mut value, _) = command(method, &args, None)?;
-        value["logging_params"] = json!({"command_id":uuid::Uuid::new_v4().to_string()});
+        // The session rejects any command that carries logging_params with
+        // RECOVERED, so this route stays bare while Connect keeps its id.
+        let (value, _) = command(method, &args, None)?;
         return direct::jam_command(api, &session, &value).await;
     }
     let cluster = direct::cluster(api).await?;
@@ -995,10 +997,11 @@ mod tests {
             "player.setRepeat",
             "player.setSpeed",
             "queue.skipTo",
+            "queue.add",
         ] {
             assert!(jam_redirected(method), "{method}");
         }
-        for method in ["queue.add", "queue.clear", "volume.set", "player.state"] {
+        for method in ["queue.clear", "volume.set", "player.state"] {
             assert!(!jam_redirected(method), "{method}");
         }
         let (pause, _) = command("player.pause", &json!({}), None).unwrap();
