@@ -560,14 +560,13 @@ pub(crate) async fn call_to(
     ) {
         return Err(Error::Unsupported);
     }
-    // A Jam takes a guest's transport over through the session service, and
-    // Spotify's receiver refuses the Connect command even when the host allows
-    // control. Obey the session before reading Connect state: its restrictions
-    // and missing device state are exactly what the redirect exists to bypass.
+    // A Jam guest following the host cannot command the receiver over
+    // Connect, whatever the host permits. The session knows the guest and
+    // accepts the command, so obey it before Connect's restrictions.
     if jam_redirected(method)
         && api.jam_command_device().is_some()
         && let Ok(session) = direct::jam_current(api).await
-        && direct::jam_redirects(&session)
+        && direct::jam_follows_host(&session)
     {
         let (mut value, _) = command(method, &args, None)?;
         value["logging_params"] = json!({"command_id":uuid::Uuid::new_v4().to_string()});

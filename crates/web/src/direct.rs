@@ -392,19 +392,17 @@ async fn jam_device(api: &Api) -> Result<String, Error> {
         .ok_or_else(|| Error::Backend("no active Connect device".into()))
 }
 async fn jam_session(api: &Api) -> Result<Value, Error> {
-    let device = jam_device(api).await?;
-    match api
-        .request(
-            "GET",
-            &format!("{SOCIAL}/v2/devices/{}/jam_status", segment(&device)),
-            None,
-        )
-        .await
-    {
-        Ok(body) => Ok(body.get("session").cloned().unwrap_or(Value::Null)),
-        Err(Error::Http { status: 404, .. }) => Ok(Value::Null),
-        Err(error) => Err(error),
-    }
+    // The account's own session, not a receiver's view of it. A guest's
+    // Connect cluster often has no active device, or one the Jam does not
+    // know, and jam_status then answers 404 for a session that exists.
+    let session = jam_current(api).await?;
+    let from = if jam_follows_host(&session) {
+        jam_host_device(&session)
+    } else {
+        None
+    };
+    api.set_jam_command_device(from);
+    Ok(session)
 }
 
 /// The signed-in account's session, the body the official client reads to
@@ -422,16 +420,40 @@ pub(crate) async fn jam_current(api: &Api) -> Result<Value, Error> {
     }
 }
 
-/// Whether the Jam service asks this account to send player commands through
-/// the session. Spotify's receiver refuses a guest's Connect command, so the
-/// session is the path that honors the host's permission.
-pub(crate) fn jam_redirects(session: &Value) -> bool {
-    session["redirectCommands"].as_bool() == Some(true)
-        && session
-            .get("session_id")
-            .or_else(|| session.get("sessionId"))
-            .and_then(Value::as_str)
-            .is_some_and(|id| !id.is_empty())
+fn jam_flag(session: &Value, snake: &str, camel: &str) -> Option<bool> {
+    session
+        .get(snake)
+        .and_then(Value::as_bool)
+        .or_else(|| session.get(camel).and_then(Value::as_bool))
+}
+
+/// Whether this account is a guest whose transport belongs to the session
+/// rather than Connect. That is a guest following the host's receiver, not
+/// the owner and not listening on its own device.
+pub(crate) fn jam_follows_host(session: &Value) -> bool {
+    session
+        .get("session_id")
+        .or_else(|| session.get("sessionId"))
+        .and_then(Value::as_str)
+        .is_some_and(|id| !id.is_empty())
+        && jam_flag(session, "is_session_owner", "isSessionOwner") == Some(false)
+        && jam_flag(session, "is_listening", "isListening") != Some(true)
+}
+
+/// The host receiver's device, the one origin a guest's session command is
+/// known to accept.
+fn jam_host_device(session: &Value) -> Option<String> {
+    [
+        session.get("hostActiveDeviceId"),
+        session.get("host_active_device_id"),
+        session.pointer("/host_device_info/device_id"),
+        session.pointer("/hostDeviceInfo/deviceId"),
+    ]
+    .into_iter()
+    .flatten()
+    .filter_map(Value::as_str)
+    .find(|id| !id.is_empty())
+    .map(str::to_owned)
 }
 
 /// Sends one player command through the Jam service, from the device that
@@ -448,6 +470,7 @@ pub(crate) async fn jam_command(
         .ok_or_else(|| Error::Backend("Jam session has no id".into()))?;
     let from = api
         .jam_command_device()
+        .or_else(|| jam_host_device(session))
         .unwrap_or_else(|| api.device_id().to_owned());
     let body = serde_json::to_vec(&json!({"command": command}))
         .map_err(|_| Error::InvalidInput("invalid Jam command"))?;
@@ -1078,15 +1101,35 @@ mod tests {
         assert!(!url.contains("local_device_id"));
         let url = jam_join_url("tok", Some("dev-1"), true);
         assert!(url.ends_with("/join/tok?playback_control=listen_and_control&join_type=deeplinking&local_device_id=dev-1"));
-        assert!(jam_redirects(&json!({
+        // A guest following the host uses the session; the owner and a
+        // guest listening locally stay on Connect.
+        assert!(jam_follows_host(&json!({
             "session_id": "s",
-            "redirectCommands": true
+            "is_session_owner": false,
+            "is_listening": false
         })));
-        assert!(!jam_redirects(&json!({"session_id": "s"})));
-        assert!(jam_redirects(&json!({
+        assert!(jam_follows_host(&json!({
             "sessionId": "s",
-            "redirectCommands": true
+            "isSessionOwner": false
         })));
-        assert!(!jam_redirects(&Value::Null));
+        assert!(!jam_follows_host(&json!({
+            "session_id": "s",
+            "is_session_owner": true
+        })));
+        assert!(!jam_follows_host(&json!({
+            "session_id": "s",
+            "is_session_owner": false,
+            "is_listening": true
+        })));
+        assert!(!jam_follows_host(&json!({"is_session_owner": false})));
+        assert!(!jam_follows_host(&Value::Null));
+        assert_eq!(
+            jam_host_device(&json!({"hostActiveDeviceId":"h"})).as_deref(),
+            Some("h")
+        );
+        assert_eq!(
+            jam_host_device(&json!({"host_device_info":{"device_id":"d"}})).as_deref(),
+            Some("d")
+        );
     }
 }
