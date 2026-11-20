@@ -560,13 +560,15 @@ pub(crate) async fn call_to(
     ) {
         return Err(Error::Unsupported);
     }
-    // A Jam guest following the host cannot command the receiver over
-    // Connect, whatever the host permits. The session knows the guest and
-    // accepts the command, so obey it before Connect's restrictions.
+    // A guest's Connect command to the host receiver is acknowledged and
+    // dropped. The same command through the session, sent as the host
+    // receiver, is the one that moves. Route exactly that case, so a guest
+    // listening on its own device keeps the Connect path.
     if jam_redirected(method)
-        && api.jam_command_device().is_some()
         && let Ok(session) = direct::jam_current(api).await
-        && direct::jam_follows_host(&session)
+        && direct::jam_guest(&session)
+        && let Some(host) = direct::jam_host_device(&session)
+        && target == Some(host.as_str())
     {
         let (mut value, _) = command(method, &args, None)?;
         value["logging_params"] = json!({"command_id":uuid::Uuid::new_v4().to_string()});
