@@ -108,3 +108,8 @@ occurrences at an exact visible slot on the named active receiver. Use one ancho
 or neither (manual-queue head). Set `manual` to false for a Next up insertion.
 Duplicate URIs receive distinct UIDs. Ads, hidden continuations and previous rows
 are retained. The HTTP payload still needs live verification against Spotify.
+
+Queue writes accept a full Connect cluster snapshot with `next_tracks` and an
+omitted empty `prev_tracks` list. An existing previous-track list is preserved.
+Malformed lists and snapshots without an upcoming-track list still fail before
+a write; occurrence identity and receiver checks remain required.

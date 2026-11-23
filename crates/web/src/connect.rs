@@ -57,11 +57,28 @@ fn queue_view(state: &Value) -> Result<Value, Error> {
     )
 }
 fn rows(state: &Value, key: &str) -> Result<Vec<Value>, Error> {
+    // Full cluster snapshots omit an empty previous-track list.
+    if key == "prev_tracks" && state.get(key).is_none() && queue_state_usable(state) {
+        return Ok(Vec::new());
+    }
     state[key].as_array().cloned().ok_or_else(|| {
         Error::Backend(format!(
             "incomplete Connect {key}; refusing queue replacement"
         ))
     })
+}
+/// A queue state a write can trust: exact upcoming rows plus either an
+/// explicit previous list or a full snapshot that omitted an empty one. A bare
+/// or empty fragment stays refused so a read cannot become a deliberate clear.
+fn queue_state_usable(state: &Value) -> bool {
+    state["next_tracks"].is_array()
+        && match state.get("prev_tracks") {
+            Some(Value::Array(_)) => true,
+            None => state["next_tracks"]
+                .as_array()
+                .is_some_and(|rows| !rows.is_empty()),
+            Some(_) => false,
+        }
 }
 pub(crate) fn capabilities(cluster: &Value) -> Capabilities {
     if cluster["active_device_id"]
@@ -83,9 +100,7 @@ pub(crate) fn capabilities(cluster: &Value) -> Capabilities {
         repeat: !denied(state, "toggling_repeat_context")
             && !denied(state, "toggling_repeat_track"),
         queue: true,
-        queue_edit: state["next_tracks"].is_array()
-            && state["prev_tracks"].is_array()
-            && !denied(state, "setting_queue"),
+        queue_edit: queue_state_usable(state) && !denied(state, "setting_queue"),
         play_context: !denied(state, "playing"),
         speed: !denied(state, "setting_playback_speed"),
         volume: supports_volume(
@@ -832,6 +847,64 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn queue_writes_accept_an_omitted_empty_previous_track_list() {
+        let mut state = edit_state();
+        state.as_object_mut().unwrap().remove("prev_tracks");
+        let cluster =
+            json!({"active_device_id":"receiver", "devices":{"receiver":{}}, "player_state":state});
+        assert!(capabilities(&cluster).queue_edit);
+        let cases = [
+            ("queue.insert", json!({"uris":["spotify:track:new"]})),
+            ("queue.replace", json!({"uris":["spotify:track:new"]})),
+            ("queue.remove", json!({"items":[state["next_tracks"][0]]})),
+            (
+                "queue.reorder",
+                json!({"items":[state["next_tracks"][1]],"before":state["next_tracks"][0]}),
+            ),
+            ("queue.clear", json!({})),
+        ];
+        for (method, args) in cases {
+            let (body, _) = command(method, &args, Some(&state)).unwrap();
+            assert_eq!(body["prev_tracks"], json!([]), "{method}");
+            assert_eq!(body["endpoint"], "set_queue", "{method}");
+            let mut explicit = state.clone();
+            explicit["prev_tracks"] = json!([]);
+            let (expected, _) = command(method, &args, Some(&explicit)).unwrap();
+            // Inserted rows have independently generated occurrence IDs.
+            let without_new_ids = |mut value: Value| {
+                for row in value["next_tracks"].as_array_mut().unwrap() {
+                    if row["uri"] == "spotify:track:new" {
+                        row.as_object_mut().unwrap().remove("uid");
+                    }
+                }
+                value
+            };
+            assert_eq!(without_new_ids(body), without_new_ids(expected), "{method}");
+        }
+    }
+
+    #[test]
+    fn queue_writes_still_refuse_malformed_or_incomplete_snapshots() {
+        for previous in [Value::Null, json!({}), json!("unknown"), json!(true)] {
+            let mut state = edit_state();
+            state["prev_tracks"] = previous;
+            assert!(command("queue.replace", &json!({"uris":[]}), Some(&state)).is_err());
+            let cluster = json!({"active_device_id":"receiver", "devices":{"receiver":{}}, "player_state":state});
+            assert!(!capabilities(&cluster).queue_edit);
+        }
+        for state in [
+            json!({}),
+            json!({"prev_tracks":[]}),
+            json!({"next_tracks":null}),
+        ] {
+            assert!(command("queue.replace", &json!({"uris":[]}), Some(&state)).is_err());
+        }
+        let state = edit_state();
+        let (body, _) = command("queue.replace", &json!({"uris":[]}), Some(&state)).unwrap();
+        assert_eq!(body["prev_tracks"], state["prev_tracks"]);
     }
 
     #[test]
