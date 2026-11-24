@@ -91,77 +91,92 @@ Prefer `catalog().track_info()` when its typed fields are sufficient. Raw querie
 
 `ManagedHost` exposes `cdp_url()`, `port()`, `is_custom_engine()` and `engine()`. Call `shutdown().await` to await owned-process termination. A host handle is not proof that Spotify is authenticated, media is ready or playback is audible.
 
-Raw requests using `application/x-protobuf` negotiate protobuf responses as well.
-Other raw requests, including image uploads, retain JSON response negotiation.
+## Raw response formats
 
-HTTP queue edits accept visible context occurrences as well as manual occurrences.
-They require exact URI/UID identities and preserve ads, hidden continuations and
-previous tracks. Reorder can explicitly change manual/context membership when a
-row moves between the queue sections. Restrictions remain enforced.
+Raw requests using `application/x-protobuf` negotiate protobuf responses. Other raw requests, including image uploads, retain JSON response negotiation.
 
-`devices().edit_queue_occurrence(device, item, before, after, manual)` uses HTTP
-for both browser and native sessions, pins the receiver, and rejects an inactive
-receiver. Omit anchors and membership to remove. Provide an anchor to move.
+## Jam membership
 
-`devices().insert_queue_items(device, uris, before, after, manual)` inserts new
-occurrences at an exact visible slot on the named active receiver. Use one anchor
-or neither (manual-queue head). Set `manual` to false for a Next up insertion.
-Duplicate URIs receive distinct UIDs. Ads, hidden continuations and previous rows
-are retained. The HTTP payload still needs live verification against Spotify.
+Join as a member following the host with `api.jam().join_on(invite, ListenOn::Host)`. Reading membership never creates a Jam or launches a player. Only an explicit Start requests a new Jam.
 
-Queue writes accept a full Connect cluster snapshot with `next_tracks` and an
-omitted empty `prev_tracks` list. An existing previous-track list is preserved.
-Malformed lists and snapshots without an upcoming-track list still fail before
-a write; occurrence identity and receiver checks remain required.
-
-Social Connect membership reads and lifecycle writes always use HTTP endpoints,
-including browser-backed `Api` instances. Reading membership never invokes the
-browser session service; only `createSession` uses the activating endpoint.
-`SocialConnectAPI.reorderQueue` takes an object with `sessionId`, `device`,
-`items` (exact URI/UID pairs), one `before` or `after` anchor, and optional
-`queued` membership. It verifies the selected guest session and host receiver,
-requires complete Connect state and host permission, and sends a bare `set_queue`
-command through the Jam session. It does not add tracks or retry uncertain writes.
-Queue snapshots recognise `provider: queue` even without `metadata.is_queued`.
-
-## Typed Jam and queue services
-
-`api.jam().join_on(invite, ListenOn::Host)` joins as a member following the host.
-`ListenOn::ThisDevice` requires Premium and a ready local receiver; it never
-starts a player or transfers playback to guess that receiver. Managed native
-sessions bind their receiver automatically. External integrations can use
-`bind_local_receiver` or `join_with_receiver` with their actual receiver ID.
-`state()` uses a five-second account-scoped cache; `refresh()` reads membership
-again. A successful join returns confirmed membership, including a fallback to
-invite information only when that exact account is listed in that exact session.
-An unconfirmed response returns an error without repeating the join.
-
-Use `leave_session(&session.id)` or `end_session(&session.id)` for the selected
-session. Successful acknowledgements retire that ID so delayed reads cannot
-resurrect it. Repeating these operations accepts an already-missing session.
-Only an explicit Start can create a Jam; an explicit join can revisit a session
-previously left. Member and permission changes invalidate the membership cache.
+| Method | Behavior |
+| --- | --- |
+| `join_on(invite, ListenOn::Host)` | Join and follow the host's playback |
+| `join_on(invite, ListenOn::ThisDevice)` | Join using this instance's ready local receiver; requires Premium |
+| `state()` | Read membership through the five-second account cache |
+| `refresh()` | Fetch membership again |
+| `leave_session(id)` | Leave the selected Jam |
+| `end_session(id)` | End the selected Jam as its host |
 
 ```rust,ignore
-let session = api.jam().join_on(invite, spotcore::ListenOn::Host).await?
+let session = api.jam()
+    .join_on(invite, spotcore::ListenOn::Host)
+    .await?
     .ok_or(spotcore::Error::Disconnected)?;
-let snapshot = api.queues().snapshot().await?;
+
 api.queues().add(&[track_uri]).await?;
-// Use URI/UID pairs from snapshot.queue for exact moves and removals.
 api.jam().leave_session(&session.id).await?;
 ```
 
-`queues()` reads Connect order and occurrence identities over HTTP. It exposes
-receiver/Jam scope and current edit permissions without hydrating artwork.
-Writes serialize per SDK session, recheck scope and permissions, and reject
-snapshots from another SDK instance. Clearing/removing affects only requested
-occurrences still present, preserving later additions and other copies of a song.
-Both ordinary and explicitly targeted queue commands use this services path,
-including native sessions playing elsewhere. They do not activate Soloist or
-transfer playback. Writes are not retried after an uncertain result.
+### Receiver selection
 
-A direct services-only live probe verified guest join, reorder and restoration
-without duplication, manual addition and exact removal, repeated leave,
-deliberate rejoin, and host end. Independent membership reads remained empty
-immediately and at delayed checks after end. Current playback was unchanged.
-Native routing is covered by mocks; these checks did not launch a native player.
+Managed native sessions bind their receiver automatically. External player integrations can supply their actual receiver through `bind_local_receiver` or `join_with_receiver`. Joining does not launch a player or transfer playback to guess a receiver.
+
+### Confirmation and stale state
+
+- Join succeeds only after membership is confirmed. Invite information is accepted as a fallback only when it lists the exact account in the exact session.
+- An unconfirmed join returns an error without repeating the write.
+- Successful Leave and End acknowledgements retire that session ID, preventing delayed reads from restoring it. Repeating either operation accepts an already-missing session.
+- An explicit join can revisit a Jam previously left. Passive reads cannot rejoin it.
+- Member and permission changes invalidate the membership cache.
+
+Membership reads and lifecycle writes use HTTP Social Connect endpoints even for browser-backed `Api` instances.
+
+## Queue services
+
+Use `api.queues()` for the active Connect receiver or shared Jam. Reads and writes use HTTP services, including when native mode is selected and another device is playing. Queue commands do not activate Soloist or transfer playback.
+
+| Method | Use |
+| --- | --- |
+| `snapshot()` | Read order, occurrence identities, receiver/Jam scope and edit permissions without waiting for artwork |
+| `add(uris)` | Append songs to Playing next |
+| `move_items(snapshot, items, before, after, manual)` | Move existing occurrences, optionally changing their manual/context section |
+| `remove(snapshot, items)` | Remove exact occurrences |
+| `clear_upcoming(snapshot)` | Remove the upcoming occurrences shown in that snapshot |
+| `insert(snapshot, uris, before, after, manual)` | Insert new occurrences at a visible slot |
+| `replace_manual(uris)` | Replace Playing next while retaining context rows and reusable occurrence identities |
+
+### Safe edits
+
+- Use exact URI/UID pairs from the snapshot. Two occurrences of the same song remain distinct.
+- Writes serialize per SDK session and recheck queue scope and permissions. A changed receiver or Jam rejects the edit. Snapshots from another SDK instance are rejected.
+- Clear and Remove preserve later additions and other copies of the same song. Already-consumed requested occurrences are ignored.
+- Edits preserve ads, hidden continuation rows and previous tracks. Ads and hidden rows are not exposed as editable songs.
+- A complete upcoming-track list is required for queue rewrites. An omitted empty previous-track list is accepted; malformed or incomplete state is rejected.
+- Uncertain writes are not automatically retried.
+
+Spotify rows with `provider: queue` count as Playing next even when `metadata.is_queued` is absent.
+
+### Existing low-level methods
+
+Prefer `queues()` for new integrations. These existing methods remain available:
+
+| Method | Behavior |
+| --- | --- |
+| `devices().edit_queue_occurrence(device, item, before, after, manual)` | Pin the active receiver. Omit anchors and membership to remove, or provide an anchor to move |
+| `devices().insert_queue_items(device, uris, before, after, manual)` | Pin the active receiver and insert at one anchor, or at the manual-queue head without an anchor. Set `manual` to false for Next up |
+| `SocialConnectAPI.reorderQueue` | Accept `sessionId`, `device`, exact `items`, one `before` or `after` anchor, and optional `queued` section membership |
+
+The Jam service shim verifies membership, host receiver and edit permission before sending a bare `set_queue` command through the session. A guest's cluster receiver ID may differ from the host's, so shared edits validate the Jam's host identity and exact queue occurrences instead of requiring those receiver IDs to match.
+
+## Verification coverage
+
+Direct services-only checks with saved accounts verified:
+
+- Guest join, repeated leave and deliberate rejoin.
+- Guest reorder without duplication, followed by restoration of the original order.
+- Manual addition and removal of the exact new occurrence.
+- Host End, with independent membership reads remaining empty immediately and at delayed checks.
+- Unchanged playback state and current track throughout those checks.
+
+Native routing is covered by mocks; no native player was launched. Positional insertion, multi-item insertion and clearing are covered by offline checks, but were not exercised by that live probe.
