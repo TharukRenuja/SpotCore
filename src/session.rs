@@ -281,7 +281,7 @@ impl SpotCore {
     }
 
     pub async fn queue(&self) -> Result<Queue, Error> {
-        self.player.backend().web.queue().await
+        Ok(self.api.queues().snapshot().await?.queue)
     }
     pub async fn refresh_state(&mut self) -> Result<Option<PlayerSnapshot>, Error> {
         self.player.refresh_state().await
@@ -317,7 +317,16 @@ impl SpotCore {
     pub fn devices(&self) -> crate::web::Devices<'_> {
         self.api.devices()
     }
+    pub fn queues(&self) -> crate::web::Queues<'_> {
+        self.api.queues()
+    }
     pub fn jam(&self) -> crate::web::Jam<'_> {
+        #[cfg(feature = "native")]
+        if let Some(native) = &self.player.backend().native
+            && let Some(device) = native.device_id()
+        {
+            let _ = self.api.bind_local_receiver(device);
+        }
         self.api.jam()
     }
     pub fn blends(&self) -> crate::web::Blends<'_> {
@@ -545,6 +554,18 @@ impl SessionBackend {
     }
 }
 
+fn queue_command(command: &Command) -> bool {
+    matches!(
+        command,
+        Command::AddToQueue(_)
+            | Command::ClearQueue
+            | Command::RemoveFromQueue(_)
+            | Command::InsertIntoQueue { .. }
+            | Command::ReorderQueue { .. }
+            | Command::SkipToQueue(_)
+    )
+}
+
 #[cfg(any(feature = "native", test))]
 fn web_control(command: &Command) -> bool {
     matches!(
@@ -586,6 +607,9 @@ impl Backend for SessionBackend {
             if let Command::SetQuality(quality) = command {
                 self.apply_quality(quality).await?;
                 return Ok(());
+            }
+            if queue_command(&command) {
+                return self.web.api().queues().execute(command).await;
             }
             #[cfg(feature = "native")]
             {
@@ -722,7 +746,7 @@ impl Client<SessionBackend> {
         self.state().map_or(0, |state| state.position_ms)
     }
     pub async fn queue(&self) -> Result<Queue, Error> {
-        self.backend.web.queue().await
+        Ok(self.backend.web.api().queues().snapshot().await?.queue)
     }
     pub async fn volume(&self) -> Result<f64, Error> {
         self.backend.web.volume().await
@@ -1018,11 +1042,23 @@ mod tests {
         assert_eq!(sdk.playback_mode(), PlaybackMode::Native);
         assert!(sdk.capabilities().queue_edit);
         assert!(sdk.capabilities().smart_shuffle);
-        sdk.clear_queue().await.unwrap();
+        browser.response.lock().unwrap()["token"] = json!({});
+        assert!(matches!(
+            sdk.clear_queue().await,
+            Err(Error::NotAuthenticated)
+        ));
+        browser
+            .response
+            .lock()
+            .unwrap()
+            .as_object_mut()
+            .unwrap()
+            .remove("token");
         sdk.set_speed(1.25).await.unwrap();
         sdk.set_shuffle_mode(ShuffleMode::Smart).await.unwrap();
         let calls = browser.calls.lock().unwrap();
-        for method in ["queue.clear", "player.setSpeed", "player.setShuffleMode"] {
+        assert!(!calls.iter().any(|(name, _)| name == "queue.clear"));
+        for method in ["player.setSpeed", "player.setShuffleMode"] {
             assert!(calls.iter().any(|(name, _)| name == method));
         }
         assert!(commands.try_recv().is_err());
@@ -1031,6 +1067,28 @@ mod tests {
 
     #[test]
     fn routing_is_chosen_before_writing() {
+        for command in [
+            Command::AddToQueue(vec![]),
+            Command::ClearQueue,
+            Command::RemoveFromQueue(vec![]),
+            Command::ReorderQueue {
+                items: vec![],
+                before: None,
+                after: None,
+            },
+            Command::InsertIntoQueue {
+                uris: vec![],
+                before: None,
+            },
+            Command::SkipToQueue(QueueItem {
+                uri: "spotify:track:test".into(),
+                uid: "one".into(),
+            }),
+        ] {
+            assert!(queue_command(&command));
+        }
+        assert!(!queue_command(&Command::Resume));
+        assert!(!queue_command(&Command::Pause));
         assert!(web_control(&Command::ClearQueue));
         assert!(web_control(&Command::SetShuffleMode(ShuffleMode::Smart)));
         assert!(web_control(&Command::SetSpeed(1.25)));

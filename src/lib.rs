@@ -31,9 +31,10 @@ pub use spotify::{AppliedQuality, SpotCoreBuilder, Spotify};
 #[cfg(feature = "web")]
 pub use web::{
     AlbumInfo, Api, ArtistInfo, ArtistRef, AudioInfo, BrowseCategory, BrowsePage, BrowserEngine,
-    BrowserRole, Copyright, DrmSupport, EpisodeInfo, HiddenSong, HomeFeed, HomeFilter, LibraryItem,
-    MediaRef, OwnerRef, PlaylistAccess, PlaylistAdder, PlaylistInfo, SearchKind, Shelf, ShowInfo,
-    TimeRange, TrackInfo, WebPlayerOptions,
+    BrowserRole, Copyright, DrmSupport, EpisodeInfo, HiddenSong, HomeFeed, HomeFilter, JamSession,
+    LibraryItem, ListenOn, MediaRef, OwnerRef, PlaylistAccess, PlaylistAdder, PlaylistInfo,
+    QueuePermissions, QueueScope, QueueSnapshot, Queues, SearchKind, Shelf, ShowInfo, TimeRange,
+    TrackInfo, WebPlayerOptions,
 };
 
 #[cfg(feature = "native")]

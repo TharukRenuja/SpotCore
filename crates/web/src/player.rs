@@ -10,10 +10,6 @@ use spotcore_core::{
 };
 use tokio::sync::broadcast;
 
-fn queue_item(item: &QueueItem) -> serde_json::Value {
-    json!({"uri":item.uri,"uid":item.uid})
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DrmSupport {
     pub widevine: bool,
@@ -133,7 +129,7 @@ impl WebBackend {
         Ok(self.state.clone())
     }
     pub async fn queue(&self) -> Result<Queue, Error> {
-        queue(&self.api.call("player.queue", json!({})).await?)
+        Ok(self.api.queues().snapshot().await?.queue)
     }
     pub async fn volume(&self) -> Result<f64, Error> {
         self.api
@@ -152,8 +148,7 @@ impl WebBackend {
         Ok(())
     }
     pub async fn clear_queue(&self) -> Result<(), Error> {
-        self.api.call("queue.clear", json!({})).await?;
-        Ok(())
+        self.api.queues().execute(Command::ClearQueue).await
     }
     /// Changes the active Connect context's shuffle mode through Spotify's ShuffleAPI.
     pub async fn set_shuffle_mode(&self, mode: ShuffleMode) -> Result<(), Error> {
@@ -168,14 +163,10 @@ impl WebBackend {
         Ok(())
     }
     pub async fn remove_from_queue(&self, items: &[QueueItem]) -> Result<(), Error> {
-        let values: Vec<_> = items
-            .iter()
-            .map(|item| json!({"uri":item.uri,"uid":item.uid}))
-            .collect();
         self.api
-            .call("queue.remove", json!({"items":values}))
-            .await?;
-        Ok(())
+            .queues()
+            .execute(Command::RemoveFromQueue(items.to_vec()))
+            .await
     }
     /// Kept so a page reload can restore the level; a fresh page starts at auto.
     /// The Web Player has no lossless level, so `Lossless` and `HiRes` clamp to `VeryHigh`.
@@ -262,6 +253,9 @@ impl WebBackend {
         if device.trim().is_empty() {
             return Err(Error::InvalidInput("missing Connect device"));
         }
+        if crate::domains::queue::is_queue_command(&command) {
+            return self.api.queues().execute_on(device, command).await;
+        }
         let (method, args) = match command {
             Command::Load(uri) => {
                 super::domains::uri(&uri)?;
@@ -296,26 +290,6 @@ impl WebBackend {
                 }}),
             ),
             Command::SetRepeat(mode) => ("player.setRepeat", json!({"mode":mode.as_u8()})),
-            Command::AddToQueue(uris) => {
-                if uris.len() != 1 {
-                    return Err(Error::Unsupported);
-                }
-                super::domains::uri(&uris[0])?;
-                ("queue.add", json!({"uris":uris}))
-            }
-            Command::ClearQueue => ("queue.clear", json!({})),
-            Command::RemoveFromQueue(items) => {
-                if items.is_empty() {
-                    return Err(Error::InvalidInput("no queue items"));
-                }
-                for item in &items {
-                    super::domains::uri(&item.uri)?;
-                    if item.uid.is_empty() {
-                        return Err(Error::InvalidInput("queue item has no uid"));
-                    }
-                }
-                ("queue.remove", json!({"items":items}))
-            }
             Command::PlayContext {
                 uri,
                 track,
@@ -341,13 +315,6 @@ impl WebBackend {
                 }
                 ("player.play", args)
             }
-            Command::SkipToQueue(item) => {
-                super::domains::uri(&item.uri)?;
-                if item.uid.is_empty() {
-                    return Err(Error::InvalidInput("queue item has no uid"));
-                }
-                ("queue.skipTo", json!({"uri":item.uri,"uid":item.uid}))
-            }
             Command::SetSpeed(speed) => {
                 if !speed.is_finite() || !(0.5..=3.5).contains(&speed) {
                     return Err(Error::InvalidInput("podcast speed must be 0.5..=3.5"));
@@ -361,6 +328,9 @@ impl WebBackend {
     }
 
     async fn dispatch(&mut self, command: Command, local_playback: bool) -> Result<(), Error> {
+        if crate::domains::queue::is_queue_command(&command) {
+            return self.api.queues().execute(command).await;
+        }
         self.refresh().await?;
         if !self.remote_capabilities().supports(&command) {
             return Err(Error::Unsupported);
@@ -391,63 +361,6 @@ impl WebBackend {
             }
             Command::SetShuffle(on) => ("player.setShuffle", json!({"on":on})),
             Command::SetRepeat(mode) => ("player.setRepeat", json!({"mode":mode.as_u8()})),
-            Command::AddToQueue(uris) => {
-                for value in &uris {
-                    super::domains::uri(value)?;
-                }
-                ("queue.add", json!({"uris":uris}))
-            }
-            Command::InsertIntoQueue { uris, before } => {
-                if uris.is_empty() {
-                    return Err(Error::InvalidInput("no queue URIs"));
-                }
-                for value in &uris {
-                    super::domains::uri(value)?;
-                }
-                let mut args = json!({"uris":uris});
-                if let Some(before) = before {
-                    args["before"] = queue_item(&before);
-                }
-                ("queue.insert", args)
-            }
-            Command::ReorderQueue {
-                items,
-                before,
-                after,
-            } => {
-                if items.is_empty() {
-                    return Err(Error::InvalidInput("no queue items"));
-                }
-                let items: Vec<_> = items.iter().map(queue_item).collect();
-                let args = match (before, after) {
-                    (Some(before), None) => json!({"items":items,"before":queue_item(&before)}),
-                    (None, Some(after)) => json!({"items":items,"after":queue_item(&after)}),
-                    (Some(_), Some(_)) => {
-                        return Err(Error::InvalidInput(
-                            "reorder takes a before or an after row, not both",
-                        ));
-                    }
-                    (None, None) => {
-                        return Err(Error::InvalidInput("reorder needs a before or after row"));
-                    }
-                };
-                ("queue.reorder", args)
-            }
-            Command::SkipToQueue(item) => {
-                super::domains::uri(&item.uri)?;
-                if item.uid.is_empty() {
-                    return Err(Error::InvalidInput("queue item has no uid"));
-                }
-                ("queue.skipTo", json!({"uri":item.uri,"uid":item.uid}))
-            }
-            Command::ClearQueue => {
-                self.clear_queue().await?;
-                return Ok(());
-            }
-            Command::RemoveFromQueue(items) => {
-                self.remove_from_queue(&items).await?;
-                return Ok(());
-            }
             Command::PlayContext {
                 uri,
                 track,
@@ -510,6 +423,9 @@ impl Backend for WebBackend {
         Box::pin(async move {
             if let Command::On { device, command } = command {
                 return self.dispatch_on(&device, *command).await;
+            }
+            if crate::domains::queue::is_queue_command(&command) {
+                return self.api.queues().execute(command).await;
             }
             if self.role == BrowserRole::Services && self.api.browser().is_ok() {
                 return Err(Error::Unsupported);

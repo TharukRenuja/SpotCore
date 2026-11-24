@@ -37,10 +37,12 @@ pub(crate) fn track(value: &Value) -> Value {
 }
 fn queued(value: &Value) -> bool {
     !is_ad(value)
-        && (value["metadata"]["is_queued"] == "true" || value["metadata"]["is_queued"] == true)
+        && (value["provider"] == "queue"
+            || value["metadata"]["is_queued"] == "true"
+            || value["metadata"]["is_queued"] == true)
 }
 
-fn queue_view(state: &Value) -> Result<Value, Error> {
+pub(crate) fn queue_view(state: &Value) -> Result<Value, Error> {
     let next = rows(state, "next_tracks")?;
     // Connect includes hidden future context iterations that the Web player's queue omits.
     let visible = || {
@@ -70,7 +72,7 @@ fn rows(state: &Value, key: &str) -> Result<Vec<Value>, Error> {
 /// A queue state a write can trust: exact upcoming rows plus either an
 /// explicit previous list or a full snapshot that omitted an empty one. A bare
 /// or empty fragment stays refused so a read cannot become a deliberate clear.
-fn queue_state_usable(state: &Value) -> bool {
+pub(crate) fn queue_state_usable(state: &Value) -> bool {
     state["next_tracks"].is_array()
         && match state.get("prev_tracks") {
             Some(Value::Array(_)) => true,
@@ -441,7 +443,7 @@ fn command(
             ("add_to_queue", "inserting_into_next_tracks")
         }
         "queue.insert" | "queue.reorder" | "queue.replace" => {
-            // Queue rewrites always come from Connect, never the Jam route.
+            // Both routes require exact complete queue state for a rewrite.
             let state = state.ok_or(Error::Unsupported)?;
             value = edit_queue(method, args, state)?;
             ("set_queue", "setting_queue")
@@ -540,7 +542,31 @@ fn jam_redirected(method: &str) -> bool {
             | "player.setSpeed"
             | "queue.skipTo"
             | "queue.add"
+            | "queue.reorder"
+            | "queue.insert"
+            | "queue.remove"
+            | "queue.clear"
+            | "queue.replace"
     )
+}
+
+fn jam_reorder_state<'a>(
+    session: &Value,
+    host: &str,
+    cluster: &'a Value,
+) -> Result<&'a Value, Error> {
+    if session["active"] == false
+        || session["queue_only_mode"] == true
+        || session["queueOnlyMode"] == true
+    {
+        return Err(Error::Unsupported);
+    }
+    if direct::jam_host_device(session).as_deref() != Some(host) {
+        return Err(Error::Backend(
+            "Jam receiver changed; refresh before editing".into(),
+        ));
+    }
+    Ok(&cluster["player_state"])
 }
 
 /// `target` names a Connect device to command without transferring the session.
@@ -576,20 +602,62 @@ pub(crate) async fn call_to(
     ) {
         return Err(Error::Unsupported);
     }
+    let expected_jam = args["sessionId"].as_str();
+    let selected_session = if expected_jam.is_some() {
+        Some(direct::jam_current(api).await?)
+    } else if jam_redirected(method) {
+        direct::jam_current(api).await.ok()
+    } else {
+        None
+    };
     // A guest's Connect command to the host receiver is acknowledged and
     // dropped. The same command through the session, sent as the host
     // receiver, is the one that moves. Route exactly that case, so a guest
     // listening on its own device keeps the Connect path.
     if jam_redirected(method)
-        && let Ok(session) = direct::jam_current(api).await
+        && let Some(session) = selected_session
         && direct::jam_guest(&session)
         && let Some(host) = direct::jam_host_device(&session)
         && target == Some(host.as_str())
     {
         // The session rejects any command that carries logging_params with
         // RECOVERED, so this route stays bare while Connect keeps its id.
-        let (value, _) = command(method, &args, None)?;
+        if expected_jam.is_some_and(|expected| {
+            session["session_id"]
+                .as_str()
+                .or_else(|| session["sessionId"].as_str())
+                != Some(expected)
+        }) {
+            return Err(Error::Backend("Jam changed; refresh before editing".into()));
+        }
+        let cluster;
+        let state = if matches!(
+            method,
+            "queue.reorder" | "queue.insert" | "queue.remove" | "queue.clear" | "queue.replace"
+        ) {
+            cluster = direct::cluster(api).await?;
+            Some(if method == "queue.insert" {
+                &cluster["player_state"]
+            } else {
+                jam_reorder_state(&session, &host, &cluster)?
+            })
+        } else {
+            None
+        };
+        let (value, _) = command(method, &args, state)?;
+        if state.is_some() {
+            let latest = direct::jam_current(api).await?;
+            if crate::jam::session_id(&latest) != crate::jam::session_id(&session)
+                || direct::jam_host_device(&latest).as_deref() != Some(host.as_str())
+                || !direct::jam_guest(&latest)
+            {
+                return Err(Error::Backend("Jam changed; refresh before editing".into()));
+            }
+        }
         return direct::jam_command(api, &session, &value).await;
+    }
+    if expected_jam.is_some() {
+        return Err(Error::Backend("Jam changed; refresh before editing".into()));
     }
     let cluster = direct::cluster(api).await?;
     let state = &cluster["player_state"];
@@ -723,6 +791,20 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn provider_queue_rows_stay_manual_without_the_optional_metadata_flag() {
+        let state = json!({"next_tracks":[
+            {"uri":"spotify:track:same","uid":"manual","provider":"queue"},
+            {"uri":"spotify:track:same","uid":"context","provider":"context"}
+        ]});
+        let view = queue_view(&state).unwrap();
+        assert_eq!(view["queued"][0]["uid"], "manual");
+        assert_eq!(view["nextUp"][0]["uid"], "context");
+        assert_eq!(view["queued"].as_array().unwrap().len(), 1);
+        assert_eq!(view["nextUp"].as_array().unwrap().len(), 1);
+        assert!(!queued(&json!({"uri":"spotify:ad:one","provider":"ad"})));
+    }
 
     #[test]
     fn queue_view_hides_context_continuations_without_deduplicating_visible_rows() {
@@ -1054,8 +1136,34 @@ mod tests {
         );
     }
 
-    /// The Jam route must build a command without the receiver's state, which
-    /// a guest often cannot read, and must not extend to queue writes.
+    /// Transport needs no receiver state; occurrence moves require a full queue.
+    #[test]
+    fn shared_reorders_preserve_occurrences_and_respect_the_host() {
+        let session = json!({"active":true,"queue_only_mode":false,"hostActiveDeviceId":"host"});
+        let cluster = json!({"active_device_id":"host", "player_state":edit_state()});
+        let state = jam_reorder_state(&session, "host", &cluster).unwrap();
+        let args = json!({"items":[state["next_tracks"][1]],"before":state["next_tracks"][0],"queued":true});
+        let (body, _) = command("queue.reorder", &args, Some(state)).unwrap();
+        assert_eq!(
+            body["next_tracks"].as_array().unwrap().len(),
+            state["next_tracks"].as_array().unwrap().len()
+        );
+        assert_eq!(body["next_tracks"][0]["uid"], "two");
+        assert_eq!(body["next_tracks"][1]["uid"], "one");
+        assert!(body.get("logging_params").is_none());
+        assert!(jam_reorder_state(&session, "another-device", &cluster).is_err());
+        let mut relayed = cluster.clone();
+        relayed["active_device_id"] = json!("guest-relay");
+        assert!(jam_reorder_state(&session, "host", &relayed).is_ok());
+        for session in [
+            json!({"active":false}),
+            json!({"queue_only_mode":true}),
+            json!({"queueOnlyMode":true}),
+        ] {
+            assert!(jam_reorder_state(&session, "host", &cluster).is_err());
+        }
+    }
+
     #[test]
     fn jam_redirected_transport_builds_without_cluster_state() {
         for method in [
@@ -1074,7 +1182,9 @@ mod tests {
         ] {
             assert!(jam_redirected(method), "{method}");
         }
-        for method in ["queue.clear", "volume.set", "player.state"] {
+        assert!(jam_redirected("queue.reorder"));
+        assert!(command("queue.reorder", &json!({}), None).is_err());
+        for method in ["volume.set", "player.state"] {
             assert!(!jam_redirected(method), "{method}");
         }
         let (pause, _) = command("player.pause", &json!({}), None).unwrap();

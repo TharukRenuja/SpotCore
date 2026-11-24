@@ -10,7 +10,17 @@ async fn facade_routes_controls_and_domains_without_backend_construction() {
     let mock = MockBrowser::start().await;
     let mut sdk = SpotCore::connect(&mock.endpoint).await.unwrap();
     sdk.play(TRACK).await.unwrap();
-    sdk.clear_queue().await.unwrap();
+    mock.response.lock().unwrap()["token"] = serde_json::json!({});
+    assert!(matches!(
+        sdk.clear_queue().await,
+        Err(Error::NotAuthenticated)
+    ));
+    mock.response
+        .lock()
+        .unwrap()
+        .as_object_mut()
+        .unwrap()
+        .remove("token");
     sdk.set_shuffle_mode(ShuffleMode::On).await.unwrap();
     sdk.stop().await.unwrap();
     sdk.library()
@@ -34,10 +44,10 @@ async fn facade_routes_controls_and_domains_without_backend_construction() {
     );
     assert!(sdk.state().unwrap().capabilities.stop);
     let calls = mock.calls.lock().unwrap();
+    assert!(!calls.iter().any(|(method, _)| method.starts_with("queue.")));
     for method in [
         "player.drmSupport",
         "player.play",
-        "queue.clear",
         "player.setShuffleMode",
         "player.pause",
         "library.add",

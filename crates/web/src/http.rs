@@ -196,7 +196,7 @@ impl Http {
         }
         let mut request = self
             .client
-            .request(method, url)
+            .request(method.clone(), url)
             .bearer_auth(session.access_token.expose())
             .header("client-token", token.as_str())
             .header("app-platform", "WebPlayer")
@@ -204,9 +204,7 @@ impl Http {
             .header("origin", "https://open.spotify.com")
             .header("referer", "https://open.spotify.com/")
             .header("accept", response_type(content_type));
-        if let Some(payload) = payload {
-            request = request.header("content-type", content_type).body(payload);
-        }
+        request = request_body(request, &method, payload, content_type);
         let response = request.send().await.map_err(|_| {
             Error::Backend("Spotify HTTP request failed; write outcome may be unknown".into())
         })?;
@@ -258,6 +256,24 @@ impl Http {
         })
     }
 }
+fn request_body(
+    request: reqwest::RequestBuilder,
+    method: &reqwest::Method,
+    payload: Option<Vec<u8>>,
+    content_type: &str,
+) -> reqwest::RequestBuilder {
+    if let Some(payload) = payload {
+        request.header("content-type", content_type).body(payload)
+    } else if matches!(
+        *method,
+        reqwest::Method::POST | reqwest::Method::PUT | reqwest::Method::PATCH
+    ) {
+        request.header(reqwest::header::CONTENT_LENGTH, 0)
+    } else {
+        request
+    }
+}
+
 fn graphql_result(response: RawResponse) -> Result<Value, Error> {
     let value: Value = serde_json::from_slice(&response.body)
         .map_err(|_| Error::Backend("Spotify GraphQL response is not JSON".into()))?;
@@ -336,6 +352,36 @@ fn check_status(response: &reqwest::Response) -> Result<(), Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn bodyless_mutations_send_an_explicit_zero_length() {
+        let client = reqwest::Client::new();
+        for method in [
+            reqwest::Method::POST,
+            reqwest::Method::PUT,
+            reqwest::Method::PATCH,
+        ] {
+            let request = request_body(
+                client.request(method.clone(), "https://spclient.wg.spotify.com/"),
+                &method,
+                None,
+                "application/json",
+            )
+            .build()
+            .unwrap();
+            assert_eq!(request.headers()[reqwest::header::CONTENT_LENGTH], "0");
+        }
+        let payload = b"{}".to_vec();
+        let request = request_body(
+            client.post("https://spclient.wg.spotify.com/"),
+            &reqwest::Method::POST,
+            Some(payload.clone()),
+            "application/json",
+        )
+        .build()
+        .unwrap();
+        assert_eq!(request.body().unwrap().as_bytes(), Some(payload.as_slice()));
+    }
+
     #[test]
     fn protobuf_requests_negotiate_binary_responses_without_changing_json_uploads() {
         assert_eq!(

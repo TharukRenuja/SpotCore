@@ -69,6 +69,9 @@ struct Inner {
     /// The device this account joined a Jam as. Spotify's session service
     /// accepts a guest's player command from it.
     jam_command_device: std::sync::Mutex<Option<String>>,
+    jam_state: tokio::sync::Mutex<crate::jam::State>,
+    local_receiver: std::sync::Mutex<Option<String>>,
+    queue_writes: tokio::sync::Mutex<()>,
     /// Per-root cache file, so a custom `Paths` keeps its hashes with it.
     cache: PathBuf,
 }
@@ -183,6 +186,9 @@ impl Api {
                     .map_err(|_| Error::Backend("invalid bundled operation schema".into()))?,
                 http: Http::new()?,
                 jam_command_device: std::sync::Mutex::new(None),
+                jam_state: tokio::sync::Mutex::new(crate::jam::State::default()),
+                local_receiver: std::sync::Mutex::new(None),
+                queue_writes: tokio::sync::Mutex::new(()),
                 cache,
             }),
         })
@@ -236,6 +242,32 @@ impl Api {
         if let Some(cookie) = &self.inner.cookie {
             cookie.invalidate(rejected).await;
         }
+    }
+    /// Binds the ready receiver owned by an external player integration. Never transfers playback.
+    pub fn bind_local_receiver(&self, device: &str) -> Result<(), Error> {
+        if device.is_empty() {
+            return Err(Error::InvalidInput("missing local receiver"));
+        }
+        *self
+            .inner
+            .local_receiver
+            .lock()
+            .map_err(|_| Error::Backend("receiver state lock poisoned".into()))? =
+            Some(device.to_owned());
+        Ok(())
+    }
+    pub(crate) fn local_receiver(&self) -> Option<String> {
+        self.inner
+            .local_receiver
+            .lock()
+            .ok()
+            .and_then(|id| id.clone())
+    }
+    pub(crate) fn jam_state(&self) -> &tokio::sync::Mutex<crate::jam::State> {
+        &self.inner.jam_state
+    }
+    pub(crate) fn queue_writes(&self) -> &tokio::sync::Mutex<()> {
+        &self.inner.queue_writes
     }
     pub(crate) fn device_id(&self) -> &str {
         self.inner.http.device_id()
@@ -385,15 +417,42 @@ impl Api {
         if service.is_empty() || method.is_empty() || method.starts_with('_') {
             return Err(Error::InvalidInput("invalid browser service method"));
         }
-        if self.inner.browser.is_none() {
-            return crate::direct::service(self, service, method, &args).await;
+        // Browser SocialConnect state can activate a session while being read.
+        // Membership reads and explicit lifecycle writes use the HTTP endpoints.
+        let result = if self.inner.browser.is_none()
+            || (service == "SocialConnectAPI"
+                && matches!(
+                    method,
+                    "fetchCurrentSession"
+                        | "createSession"
+                        | "deleteSession"
+                        | "leaveSession"
+                        | "reorderQueue"
+                        | "joinSession"
+                )) {
+            crate::direct::service(self, service, method, &args).await
+        } else {
+            self.call(
+                "service.call",
+                json!({"service":service,"method":method,"args":args}),
+            )
+            .await
+        };
+        if result.is_ok()
+            && service == "SocialConnectAPI"
+            && matches!(
+                method,
+                "removeSessionMember"
+                    | "kickAllParticipants"
+                    | "setQueueOnlyMode"
+                    | "setParticipantVolumeControl"
+            )
+        {
+            crate::jam::invalidate(self).await;
         }
-        self.call(
-            "service.call",
-            json!({"service":service,"method":method,"args":args}),
-        )
-        .await
+        result
     }
+
     /// Full persisted GraphQL response; any GraphQL error (including partial data) fails the call.
     /// Missing or rejected persisted hashes are discovered once before a retry.
     pub async fn gql(&self, name: &str, variables: Value) -> Result<Value, Error> {
@@ -520,6 +579,9 @@ impl Api {
     }
     pub fn extras(&self) -> Extras<'_> {
         Extras(self)
+    }
+    pub fn queues(&self) -> crate::Queues<'_> {
+        crate::Queues(self)
     }
     pub fn devices(&self) -> Devices<'_> {
         Devices(self)

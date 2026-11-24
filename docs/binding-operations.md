@@ -95,16 +95,22 @@ Direct duration arguments (`position`, `amount`) are integer **milliseconds**. `
 | --- | --- | --- |
 | `jam.availability` | `{}` | `Value` |
 | `jam.end` | `{}` | `Value` |
+| `jam.end_session` | `id: String` | `()` |
 | `jam.invite_link` | `session_id: String` | `Value` |
 | `jam.join` | `token: String` | `Value` |
 | `jam.join_as` | `token: String, listen_on_device: bool` | `Value` |
+| `jam.join_on` | `token: String, target: ListenOn` | `Option<JamSession>` |
+| `jam.join_with_receiver` | `token: String, target: ListenOn, receiver: String` | `Option<JamSession>` |
 | `jam.leave` | `{}` | `Value` |
+| `jam.leave_session` | `id: String` | `()` |
+| `jam.refresh` | `{}` | `Option<JamSession>` |
 | `jam.remove_member` | `value: String` | `Value` |
 | `jam.session` | `{}` | `Value` |
 | `jam.session_info` | `token: String` | `Value` |
 | `jam.set_participant_volume_control` | `enabled: bool` | `Value` |
 | `jam.set_queue_only` | `enabled: bool` | `Value` |
 | `jam.start` | `{}` | `Value` |
+| `jam.state` | `{}` | `Option<JamSession>` |
 
 ## Library
 
@@ -223,6 +229,19 @@ Direct duration arguments (`position`, `amount`) are integer **milliseconds**. `
 | `podcasts.show` | `value: String` | `MediaItem` |
 | `podcasts.show_details` | `value: String` | `Value` |
 | `podcasts.show_info` | `value: String` | `ShowInfo` |
+
+## Queues
+
+| Operation | Arguments | Result |
+| --- | --- | --- |
+| `queues.add` | `uris: Vec<String>` | `()` |
+| `queues.clear_upcoming` | `snapshot: QueueSnapshot` | `()` |
+| `queues.execute` | `command: Command` | `()` |
+| `queues.insert` | `snapshot: QueueSnapshot, uris: Vec<String>, before: Option<QueueItem>, after: Option<QueueItem>, manual: bool` | `()` |
+| `queues.move_items` | `snapshot: QueueSnapshot, items: Vec<QueueItem>, before: Option<QueueItem>, after: Option<QueueItem>, manual: Option<bool>` | `()` |
+| `queues.remove` | `snapshot: QueueSnapshot, items: Vec<QueueItem>` | `()` |
+| `queues.replace_manual` | `uris: Vec<String>` | `()` |
+| `queues.snapshot` | `{}` | `QueueSnapshot` |
 
 ## Recents
 

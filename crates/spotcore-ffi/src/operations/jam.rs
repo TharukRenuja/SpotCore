@@ -2,6 +2,7 @@
 use super::{empty, encode, parse};
 use crate::BindingError;
 use serde_json::Value;
+use spotcore::ListenOn;
 
 pub(super) async fn call(
     sdk: &mut spotcore::SpotCore,
@@ -16,6 +17,15 @@ pub(super) async fn call(
         "end" => {
             empty(arguments)?;
             encode(sdk.jam().end().await?)
+        }
+        "end_session" => {
+            #[derive(serde::Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Args {
+                id: String,
+            }
+            let p: Args = parse(arguments)?;
+            encode(sdk.jam().end_session(&p.id).await?)
         }
         "invite_link" => {
             #[derive(serde::Deserialize)]
@@ -45,9 +55,47 @@ pub(super) async fn call(
             let p: Args = parse(arguments)?;
             encode(sdk.jam().join_as(&p.token, p.listen_on_device).await?)
         }
+        "join_on" => {
+            #[derive(serde::Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Args {
+                token: String,
+                target: ListenOn,
+            }
+            let p: Args = parse(arguments)?;
+            encode(sdk.jam().join_on(&p.token, p.target).await?)
+        }
+        "join_with_receiver" => {
+            #[derive(serde::Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Args {
+                token: String,
+                target: ListenOn,
+                receiver: String,
+            }
+            let p: Args = parse(arguments)?;
+            encode(
+                sdk.jam()
+                    .join_with_receiver(&p.token, p.target, &p.receiver)
+                    .await?,
+            )
+        }
         "leave" => {
             empty(arguments)?;
             encode(sdk.jam().leave().await?)
+        }
+        "leave_session" => {
+            #[derive(serde::Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Args {
+                id: String,
+            }
+            let p: Args = parse(arguments)?;
+            encode(sdk.jam().leave_session(&p.id).await?)
+        }
+        "refresh" => {
+            empty(arguments)?;
+            encode(sdk.jam().refresh().await?)
         }
         "remove_member" => {
             #[derive(serde::Deserialize)]
@@ -92,6 +140,10 @@ pub(super) async fn call(
         "start" => {
             empty(arguments)?;
             encode(sdk.jam().start().await?)
+        }
+        "state" => {
+            empty(arguments)?;
+            encode(sdk.jam().state().await?)
         }
         _ => Err(super::unknown()),
     }

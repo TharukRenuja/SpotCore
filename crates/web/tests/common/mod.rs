@@ -145,7 +145,7 @@ impl MockBrowser {
                                     let value=match name {
                                         "test.echo"=>params,
                                         "test.reorder"=>{let packet=json!({"id":id,"result":{"result":{"value":params}}});if let Some(first)=reorder.take(){ws.send(Message::Text(packet.to_string().into())).await.unwrap();ws.send(Message::Text(first)).await.unwrap();}else{reorder=Some(packet.to_string().into());}continue;},
-                                        "token.get"=>json!({"accessToken":"test-secret","expiresAtMs":u64::MAX,"clientId":"client","appVersion":"version","isAnonymous":false}),
+                                        "token.get"=>body_response.lock().unwrap().get("token").cloned().unwrap_or_else(||json!({"accessToken":"test-secret","expiresAtMs":u64::MAX,"clientId":"client","appVersion":"version","isAnonymous":false})),
                                         "player.state"=>current_state.clone(),
                                         "player.drmSupport"=>json!({"widevine":current_state["drmSupport"].as_bool().unwrap_or(true),"aac":true,"error":null}),
                                         "player.audioInfo"=>json!({"bitrate":256000,"mime":"audio/aac","level":"very_high"}),

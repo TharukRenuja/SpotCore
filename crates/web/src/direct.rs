@@ -363,7 +363,7 @@ fn session_id(body: &Value) -> Result<&str, Error> {
         .filter(|id| !id.is_empty())
         .ok_or_else(|| Error::Backend("no active Jam session".into()))
 }
-fn jam_join_url(token: &str, device: Option<&str>, listen_and_control: bool) -> String {
+pub(crate) fn jam_join_url(token: &str, device: Option<&str>, listen_and_control: bool) -> String {
     let playback = if listen_and_control {
         "listen_and_control"
     } else {
@@ -379,17 +379,6 @@ fn jam_join_url(token: &str, device: Option<&str>, listen_and_control: bool) -> 
         url.push_str(&segment(device));
     }
     url
-}
-async fn jam_device(api: &Api) -> Result<String, Error> {
-    let cluster = cluster(api).await?;
-    if let Some(id) = cluster["active_device_id"].as_str() {
-        return Ok(id.to_owned());
-    }
-    cluster["devices"]
-        .as_object()
-        .and_then(|devices| devices.keys().next())
-        .cloned()
-        .ok_or_else(|| Error::Backend("no active Connect device".into()))
 }
 async fn jam_session(api: &Api) -> Result<Value, Error> {
     // The account's own session, not a receiver's view of it. A guest's
@@ -408,16 +397,7 @@ async fn jam_session(api: &Api) -> Result<Value, Error> {
 /// The signed-in account's session, the body the official client reads to
 /// decide where its player commands go. A missing session is null.
 pub(crate) async fn jam_current(api: &Api) -> Result<Value, Error> {
-    match api
-        .request("GET", &format!("{SOCIAL}/v2/sessions/current"), None)
-        .await
-    {
-        Ok(body) => Ok(body),
-        Err(Error::Http {
-            status: 404 | 410, ..
-        }) => Ok(Value::Null),
-        Err(error) => Err(error),
-    }
+    crate::jam::current(api, true).await
 }
 
 fn jam_flag(session: &Value, snake: &str, camel: &str) -> Option<bool> {
@@ -522,75 +502,45 @@ async fn jam(api: &Api, method: &str, args: &[Value]) -> Result<Value, Error> {
         // The desktop client hardcodes this configuration as enabled.
         "getEnabled" => Ok(json!("ENABLED")),
         "fetchCurrentSession" => jam_session(api).await,
-        "createSession" => {
-            api.request(
-                "GET",
-                &format!("{SOCIAL}/v2/sessions/current_or_new?activate=true"),
-                None,
-            )
-            .await
+        "reorderQueue" => {
+            let args = args
+                .first()
+                .ok_or(Error::InvalidInput("missing Jam queue edit"))?;
+            let device = args["device"]
+                .as_str()
+                .ok_or(Error::InvalidInput("missing Jam receiver"))?;
+            if args["sessionId"].as_str().is_none_or(str::is_empty) {
+                return Err(Error::InvalidInput("missing Jam identity"));
+            }
+            crate::connect::call_to(api, Some(device), "queue.reorder", args.clone()).await
         }
+        "createSession" => crate::jam::start(api).await,
         "joinSession" => {
             let token = arg(args, 0)?;
-            let device = jam_device(api).await.ok();
-            let listen_and_control = match args.get(1).and_then(Value::as_bool) {
-                Some(requested) => requested,
-                // An unreadable profile means an unknown tier, which joins like Free.
-                None => api
-                    .users()
-                    .me()
-                    .await
-                    .is_ok_and(|account| account.tier == spotcore_auth::AccountTier::Premium),
+            let listen_here = args.get(1).and_then(Value::as_bool).unwrap_or(false);
+            let receiver = args
+                .get(2)
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+                .or_else(|| api.local_receiver());
+            let receiver = match receiver {
+                Some(receiver) => receiver,
+                None if !listen_here => api.device_id().to_owned(),
+                None => {
+                    return Err(Error::InvalidInput(
+                        "this SDK instance has no ready local receiver",
+                    ));
+                }
             };
-            let response = api
-                .request(
-                    "POST",
-                    &jam_join_url(token, device.as_deref(), listen_and_control),
-                    None,
-                )
-                .await;
-            if response.is_ok() {
-                api.set_jam_command_device(device);
-            }
-            response
+            crate::jam::join(api, token, &receiver, listen_here).await
         }
         "leaveSession" | "deleteSession" => {
-            let current = jam_session(api).await?;
-            let id = match args.first().and_then(Value::as_str) {
-                Some(id) => id,
-                None => session_id(&current)?,
-            };
-            if method == "leaveSession" {
-                match api
-                    .request(
-                        "POST",
-                        &format!("{SOCIAL}/v3/sessions/{}/leave", segment(id)),
-                        None,
-                    )
-                    .await
-                {
-                    Err(Error::Http { status: 404, .. }) => {}
-                    other => {
-                        other?;
-                    }
-                }
-            } else {
-                match api
-                    .request(
-                        "DELETE",
-                        &format!("{SOCIAL}/v3/sessions/{}", segment(id)),
-                        None,
-                    )
-                    .await
-                {
-                    Err(Error::Http { status: 404, .. }) => {}
-                    other => {
-                        other?;
-                    }
-                }
-            }
-            api.set_jam_command_device(None);
-            Ok(json!(true))
+            crate::jam::finish(
+                api,
+                args.first().and_then(Value::as_str),
+                method == "deleteSession",
+            )
+            .await
         }
         "getSessionInfo" => {
             let url = format!("{SOCIAL}/v2/sessions/info/{}", segment(arg(args, 0)?));

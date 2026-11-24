@@ -113,3 +113,55 @@ Queue writes accept a full Connect cluster snapshot with `next_tracks` and an
 omitted empty `prev_tracks` list. An existing previous-track list is preserved.
 Malformed lists and snapshots without an upcoming-track list still fail before
 a write; occurrence identity and receiver checks remain required.
+
+Social Connect membership reads and lifecycle writes always use HTTP endpoints,
+including browser-backed `Api` instances. Reading membership never invokes the
+browser session service; only `createSession` uses the activating endpoint.
+`SocialConnectAPI.reorderQueue` takes an object with `sessionId`, `device`,
+`items` (exact URI/UID pairs), one `before` or `after` anchor, and optional
+`queued` membership. It verifies the selected guest session and host receiver,
+requires complete Connect state and host permission, and sends a bare `set_queue`
+command through the Jam session. It does not add tracks or retry uncertain writes.
+Queue snapshots recognise `provider: queue` even without `metadata.is_queued`.
+
+## Typed Jam and queue services
+
+`api.jam().join_on(invite, ListenOn::Host)` joins as a member following the host.
+`ListenOn::ThisDevice` requires Premium and a ready local receiver; it never
+starts a player or transfers playback to guess that receiver. Managed native
+sessions bind their receiver automatically. External integrations can use
+`bind_local_receiver` or `join_with_receiver` with their actual receiver ID.
+`state()` uses a five-second account-scoped cache; `refresh()` reads membership
+again. A successful join returns confirmed membership, including a fallback to
+invite information only when that exact account is listed in that exact session.
+An unconfirmed response returns an error without repeating the join.
+
+Use `leave_session(&session.id)` or `end_session(&session.id)` for the selected
+session. Successful acknowledgements retire that ID so delayed reads cannot
+resurrect it. Repeating these operations accepts an already-missing session.
+Only an explicit Start can create a Jam; an explicit join can revisit a session
+previously left. Member and permission changes invalidate the membership cache.
+
+```rust,ignore
+let session = api.jam().join_on(invite, spotcore::ListenOn::Host).await?
+    .ok_or(spotcore::Error::Disconnected)?;
+let snapshot = api.queues().snapshot().await?;
+api.queues().add(&[track_uri]).await?;
+// Use URI/UID pairs from snapshot.queue for exact moves and removals.
+api.jam().leave_session(&session.id).await?;
+```
+
+`queues()` reads Connect order and occurrence identities over HTTP. It exposes
+receiver/Jam scope and current edit permissions without hydrating artwork.
+Writes serialize per SDK session, recheck scope and permissions, and reject
+snapshots from another SDK instance. Clearing/removing affects only requested
+occurrences still present, preserving later additions and other copies of a song.
+Both ordinary and explicitly targeted queue commands use this services path,
+including native sessions playing elsewhere. They do not activate Soloist or
+transfer playback. Writes are not retried after an uncertain result.
+
+A direct services-only live probe verified guest join, reorder and restoration
+without duplication, manual addition and exact removal, repeated leave,
+deliberate rejoin, and host end. Independent membership reads remained empty
+immediately and at delayed checks after end. Current playback was unchanged.
+Native routing is covered by mocks; these checks did not launch a native player.

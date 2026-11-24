@@ -1,4 +1,5 @@
 use super::*;
+use crate::{JamSession, ListenOn};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use spotcore_auth::AccountTier;
@@ -560,7 +561,6 @@ impl Devices<'_> {
         .await;
         Ok(queue)
     }
-    /// Replaces manual queue entries in one HTTP command, retaining context and reusable row identities.
     /// Edits one exact visible occurrence on the named active Connect receiver.
     /// No anchors or membership means removal; membership alone changes section in place.
     pub async fn edit_queue_occurrence(
@@ -571,19 +571,20 @@ impl Devices<'_> {
         after: Option<spotcore_core::QueueItem>,
         manual: Option<bool>,
     ) -> Result<(), Error> {
-        let method = if before.is_none() && after.is_none() && manual.is_none() {
-            "queue.remove"
+        let snapshot = self.0.queues().snapshot().await?;
+        if snapshot.scope.as_ref().map(|scope| scope.receiver.as_str()) != Some(device) {
+            return Err(Error::Backend(
+                "queue receiver changed; refresh before editing".into(),
+            ));
+        }
+        if before.is_none() && after.is_none() && manual.is_none() {
+            self.0.queues().remove(&snapshot, &[item]).await
         } else {
-            "queue.reorder"
-        };
-        crate::connect::call_to(
-            self.0,
-            Some(device),
-            method,
-            json!({"items":[item],"before":before,"after":after,"queued":manual}),
-        )
-        .await?;
-        Ok(())
+            self.0
+                .queues()
+                .move_items(&snapshot, &[item], before, after, manual)
+                .await
+        }
     }
 
     /// Inserts tracks at an exact visible slot on the named active receiver.
@@ -596,20 +597,30 @@ impl Devices<'_> {
         after: Option<spotcore_core::QueueItem>,
         manual: bool,
     ) -> Result<(), Error> {
-        crate::connect::call_to(
-            self.0,
-            Some(device),
-            "queue.insert",
-            json!({"uris":uris,"before":before,"after":after,"queued":manual}),
-        )
-        .await?;
-        Ok(())
+        let snapshot = self.0.queues().snapshot().await?;
+        if snapshot.scope.as_ref().map(|scope| scope.receiver.as_str()) != Some(device) {
+            return Err(Error::Backend(
+                "queue receiver changed; refresh before editing".into(),
+            ));
+        }
+        self.0
+            .queues()
+            .insert(&snapshot, uris, before, after, manual)
+            .await
     }
 
+    /// Replaces manual entries while preserving context and reusable occurrence identities.
     pub async fn replace_queued(&self, device: &str, uris: &[String]) -> Result<(), Error> {
-        crate::connect::call_to(self.0, Some(device), "queue.replace", json!({"uris":uris}))
-            .await?;
-        Ok(())
+        let snapshot = self.0.queues().snapshot().await?;
+        if snapshot.scope.as_ref().map(|scope| scope.receiver.as_str()) != Some(device) {
+            return Err(Error::Backend(
+                "queue receiver changed; refresh before editing".into(),
+            ));
+        }
+        self.0
+            .queues()
+            .write(&snapshot, "queue.replace", json!({"uris":uris}))
+            .await
     }
     pub async fn list(&self) -> Result<Vec<Device>, Error> {
         if self.0.browser().is_err() {
@@ -692,7 +703,66 @@ impl Jam<'_> {
         service(self.0, "SocialConnectAPI", "getEnabled", vec![]).await
     }
     pub async fn session(&self) -> Result<Value, Error> {
-        service(self.0, "SocialConnectAPI", "fetchCurrentSession", vec![]).await
+        crate::jam::current(self.0, false).await
+    }
+    pub async fn refresh(&self) -> Result<Option<JamSession>, Error> {
+        JamSession::parse(crate::jam::current(self.0, true).await?)
+    }
+    pub async fn state(&self) -> Result<Option<JamSession>, Error> {
+        JamSession::parse(self.session().await?)
+    }
+    pub async fn join_on(
+        &self,
+        token: &str,
+        target: ListenOn,
+    ) -> Result<Option<JamSession>, Error> {
+        let receiver = if target == ListenOn::ThisDevice {
+            match self.0.local_receiver() {
+                Some(receiver) => receiver,
+                None => {
+                    let mut devices = self
+                        .0
+                        .devices()
+                        .list()
+                        .await?
+                        .into_iter()
+                        .filter(|device| device.local);
+                    let device = devices.next().ok_or(Error::InvalidInput(
+                        "this SDK instance has no ready local receiver",
+                    ))?;
+                    if devices.next().is_some() {
+                        return Err(Error::InvalidInput("local receiver is ambiguous"));
+                    }
+                    device.id
+                }
+            }
+        } else {
+            self.0
+                .local_receiver()
+                .unwrap_or_else(|| self.0.device_id().to_owned())
+        };
+        self.join_with_receiver(token, target, &receiver).await
+    }
+    pub async fn join_with_receiver(
+        &self,
+        token: &str,
+        target: ListenOn,
+        receiver: &str,
+    ) -> Result<Option<JamSession>, Error> {
+        let token = jam_token(token)?;
+        JamSession::parse(
+            crate::jam::join(self.0, &token, receiver, target == ListenOn::ThisDevice).await?,
+        )
+    }
+    pub async fn leave_session(&self, id: &str) -> Result<(), Error> {
+        nonempty(id)?;
+        crate::jam::finish(self.0, Some(id), false).await?;
+        Ok(())
+    }
+    pub async fn end_session(&self, id: &str) -> Result<(), Error> {
+        nonempty(id)?;
+        crate::jam::finish(self.0, Some(id), true).await?;
+        Ok(())
     }
     pub async fn start(&self) -> Result<Value, Error> {
         let enabled = self.availability().await?;
@@ -704,27 +774,22 @@ impl Jam<'_> {
     /// Join a Jam as a guest. Accepts an invite link, a `spotify:socialsession:`
     /// URI, or a bare join token.
     pub async fn join(&self, token: &str) -> Result<Value, Error> {
-        let token = jam_token(token)?;
-        service(
-            self.0,
-            "SocialConnectAPI",
-            "joinSession",
-            vec![json!(token)],
-        )
-        .await
+        Ok(self
+            .join_on(token, ListenOn::Host)
+            .await?
+            .map_or(Value::Null, |session| session.raw))
     }
-    /// Join a Jam as a guest with an explicit playback target.
-    /// `listen_on_device` asks to play on this account's own device instead of
-    /// the host's; Spotify rejects it for accounts that may not use it.
+    /// Joins following the host, or using this instance's ready receiver.
     pub async fn join_as(&self, token: &str, listen_on_device: bool) -> Result<Value, Error> {
-        let token = jam_token(token)?;
-        service(
-            self.0,
-            "SocialConnectAPI",
-            "joinSession",
-            vec![json!(token), json!(listen_on_device)],
-        )
-        .await
+        let target = if listen_on_device {
+            ListenOn::ThisDevice
+        } else {
+            ListenOn::Host
+        };
+        Ok(self
+            .join_on(token, target)
+            .await?
+            .map_or(Value::Null, |session| session.raw))
     }
     /// Preview the Jam behind an invite link or token without joining it.
     pub async fn session_info(&self, token: &str) -> Result<Value, Error> {
@@ -738,10 +803,10 @@ impl Jam<'_> {
         .await
     }
     pub async fn leave(&self) -> Result<Value, Error> {
-        service(self.0, "SocialConnectAPI", "leaveSession", vec![]).await
+        crate::jam::finish(self.0, None, false).await
     }
     pub async fn end(&self) -> Result<Value, Error> {
-        service(self.0, "SocialConnectAPI", "deleteSession", vec![]).await
+        crate::jam::finish(self.0, None, true).await
     }
     pub async fn invite_link(&self, session_id: &str) -> Result<Value, Error> {
         nonempty(session_id)?;

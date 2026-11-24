@@ -429,6 +429,13 @@
     "result": "Value"
   },
   {
+    "operation": "jam.end_session",
+    "arguments": {
+      "id": "String"
+    },
+    "result": "()"
+  },
+  {
     "operation": "jam.invite_link",
     "arguments": {
       "session_id": "String"
@@ -451,9 +458,38 @@
     "result": "Value"
   },
   {
+    "operation": "jam.join_on",
+    "arguments": {
+      "token": "String",
+      "target": "ListenOn"
+    },
+    "result": "Option<JamSession>"
+  },
+  {
+    "operation": "jam.join_with_receiver",
+    "arguments": {
+      "token": "String",
+      "target": "ListenOn",
+      "receiver": "String"
+    },
+    "result": "Option<JamSession>"
+  },
+  {
     "operation": "jam.leave",
     "arguments": {},
     "result": "Value"
+  },
+  {
+    "operation": "jam.leave_session",
+    "arguments": {
+      "id": "String"
+    },
+    "result": "()"
+  },
+  {
+    "operation": "jam.refresh",
+    "arguments": {},
+    "result": "Option<JamSession>"
   },
   {
     "operation": "jam.remove_member",
@@ -492,6 +528,11 @@
     "operation": "jam.start",
     "arguments": {},
     "result": "Value"
+  },
+  {
+    "operation": "jam.state",
+    "arguments": {},
+    "result": "Option<JamSession>"
   },
   {
     "operation": "library.add",
@@ -1181,6 +1222,69 @@
       "value": "String"
     },
     "result": "ShowInfo"
+  },
+  {
+    "operation": "queues.add",
+    "arguments": {
+      "uris": "Vec<String>"
+    },
+    "result": "()"
+  },
+  {
+    "operation": "queues.clear_upcoming",
+    "arguments": {
+      "snapshot": "QueueSnapshot"
+    },
+    "result": "()"
+  },
+  {
+    "operation": "queues.execute",
+    "arguments": {
+      "command": "Command"
+    },
+    "result": "()"
+  },
+  {
+    "operation": "queues.insert",
+    "arguments": {
+      "snapshot": "QueueSnapshot",
+      "uris": "Vec<String>",
+      "before": "Option<QueueItem>",
+      "after": "Option<QueueItem>",
+      "manual": "bool"
+    },
+    "result": "()"
+  },
+  {
+    "operation": "queues.move_items",
+    "arguments": {
+      "snapshot": "QueueSnapshot",
+      "items": "Vec<QueueItem>",
+      "before": "Option<QueueItem>",
+      "after": "Option<QueueItem>",
+      "manual": "Option<bool>"
+    },
+    "result": "()"
+  },
+  {
+    "operation": "queues.remove",
+    "arguments": {
+      "snapshot": "QueueSnapshot",
+      "items": "Vec<QueueItem>"
+    },
+    "result": "()"
+  },
+  {
+    "operation": "queues.replace_manual",
+    "arguments": {
+      "uris": "Vec<String>"
+    },
+    "result": "()"
+  },
+  {
+    "operation": "queues.snapshot",
+    "arguments": {},
+    "result": "QueueSnapshot"
   },
   {
     "operation": "recents.entries",

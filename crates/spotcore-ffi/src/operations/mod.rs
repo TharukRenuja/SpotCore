@@ -13,6 +13,7 @@ mod library;
 mod playback;
 mod playlists;
 mod podcasts;
+mod queues;
 mod recents;
 mod search;
 mod users;
@@ -56,6 +57,7 @@ pub async fn call(
         "devices" => devices::call(sdk, method, arguments).await,
         "extras" => extras::call(sdk, method, arguments).await,
         "home" => home::call(sdk, method, arguments).await,
+        "queues" => queues::call(sdk, method, arguments).await,
         "jam" => jam::call(sdk, method, arguments).await,
         "library" => library::call(sdk, method, arguments).await,
         "playback" => playback::call(sdk, method, arguments).await,

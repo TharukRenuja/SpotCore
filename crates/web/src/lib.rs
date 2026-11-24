@@ -9,6 +9,8 @@ mod direct;
 mod domains;
 pub mod host;
 mod http;
+mod jam;
+pub use jam::{JamSession, ListenOn};
 mod mapping;
 mod page;
 pub use page::WebPlayerOptions;

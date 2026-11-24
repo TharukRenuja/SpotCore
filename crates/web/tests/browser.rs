@@ -208,14 +208,25 @@ async fn web_only_commands_reach_the_page() {
         .await
         .unwrap();
     player.execute(Command::SetSpeed(1.25)).await.unwrap();
-    player
-        .execute(Command::RemoveFromQueue(vec![spotcore_core::QueueItem {
+    mock.response.lock().unwrap()["token"] = json!({});
+    for command in [
+        Command::RemoveFromQueue(vec![spotcore_core::QueueItem {
             uri: TRACK.into(),
             uid: "uid".into(),
-        }]))
-        .await
-        .unwrap();
-    player.execute(Command::ClearQueue).await.unwrap();
+        }]),
+        Command::ClearQueue,
+    ] {
+        assert!(matches!(
+            player.execute(command).await,
+            Err(Error::NotAuthenticated)
+        ));
+    }
+    mock.response
+        .lock()
+        .unwrap()
+        .as_object_mut()
+        .unwrap()
+        .remove("token");
     player
         .execute(Command::SetShuffleMode(spotcore_core::ShuffleMode::On))
         .await
@@ -241,8 +252,7 @@ async fn web_only_commands_reach_the_page() {
             .iter()
             .any(|(method, args)| method == "player.setShuffleMode" && args == &json!({"mode":2}))
     );
-    assert_eq!(call("queue.remove")["items"][0]["uid"], "uid");
-    assert!(calls.iter().any(|(method, _)| method == "queue.clear"));
+    assert!(!calls.iter().any(|(method, _)| method.starts_with("queue.")));
 }
 
 #[tokio::test]
@@ -424,69 +434,59 @@ async fn local_play_selects_web_device_but_remote_play_does_not() {
 }
 
 #[tokio::test]
-async fn queue_edit_commands_reach_the_page() {
+async fn queue_edits_use_services_without_page_queue_or_transfer_commands() {
     let mock = MockBrowser::start().await;
     let api = Api::connect(&mock.endpoint).await.unwrap();
     let mut player = WebBackend::new(api).await.unwrap();
+    mock.response.lock().unwrap()["token"] = json!({});
     let item = |uid: &str| spotcore_core::QueueItem {
         uri: TRACK.into(),
         uid: uid.into(),
     };
-    player
-        .execute(Command::InsertIntoQueue {
+    for command in [
+        Command::InsertIntoQueue {
             uris: vec![TRACK.into()],
             before: Some(item("next")),
-        })
-        .await
-        .unwrap();
-    player
-        .execute(Command::ReorderQueue {
+        },
+        Command::ReorderQueue {
             items: vec![item("moved")],
             before: None,
             after: Some(item("anchor")),
-        })
-        .await
-        .unwrap();
-    player
-        .execute(Command::SkipToQueue(item("target")))
-        .await
-        .unwrap();
-    assert!(matches!(
-        player
-            .execute(Command::ReorderQueue {
-                items: vec![item("moved")],
-                before: None,
-                after: None,
-            })
-            .await,
-        Err(Error::InvalidInput(_))
-    ));
-    assert!(matches!(
-        player
-            .execute(Command::InsertIntoQueue {
-                uris: vec![],
-                before: None,
-            })
-            .await,
-        Err(Error::InvalidInput(_))
-    ));
+        },
+        Command::SkipToQueue(item("target")),
+        Command::On {
+            device: "receiver".into(),
+            command: Box::new(Command::ClearQueue),
+        },
+    ] {
+        assert!(matches!(
+            player.execute(command).await,
+            Err(Error::NotAuthenticated)
+        ));
+    }
+    for command in [
+        Command::ReorderQueue {
+            items: vec![item("moved")],
+            before: None,
+            after: None,
+        },
+        Command::InsertIntoQueue {
+            uris: vec![],
+            before: None,
+        },
+    ] {
+        assert!(matches!(
+            player.execute(command).await,
+            Err(Error::InvalidInput(_))
+        ));
+    }
     let calls = mock.calls.lock().unwrap();
-    let call = |name: &str| {
-        calls
+    assert!(
+        !calls
             .iter()
-            .find(|(method, _)| method == name)
-            .map(|(_, args)| args.clone())
-            .unwrap_or_else(|| panic!("missing {name}"))
-    };
-    assert_eq!(
-        call("queue.insert"),
-        json!({"uris":[TRACK],"before":{"uri":TRACK,"uid":"next"}})
+            .any(|(method, args)| method.starts_with("queue.")
+                || (method == "service.call" && args["method"] == "pullToLocalDevice"))
     );
-    assert_eq!(
-        call("queue.reorder"),
-        json!({"items":[{"uri":TRACK,"uid":"moved"}],"after":{"uri":TRACK,"uid":"anchor"}})
-    );
-    assert_eq!(call("queue.skipTo"), json!({"uri":TRACK,"uid":"target"}));
 }
 
 #[tokio::test]
