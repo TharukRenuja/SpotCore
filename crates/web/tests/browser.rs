@@ -119,6 +119,27 @@ async fn sdk_uses_the_browser_for_authenticated_search_and_domain_calls() {
 }
 
 #[tokio::test]
+async fn jam_helpers_never_instantiate_the_browser_session_service() {
+    let mock = MockBrowser::start().await;
+    let api = Api::connect(&mock.endpoint).await.unwrap();
+    mock.response.lock().unwrap()["token"] = json!({});
+    assert_eq!(api.jam().availability().await.unwrap(), json!("ENABLED"));
+    for result in [
+        api.jam().end_session("ended").await.map(|_| json!(true)),
+        api.jam().session().await,
+        api.jam().session_info("invite-token").await,
+        api.jam().invite_link("ended").await,
+        api.jam().set_queue_only(true).await,
+        api.jam().set_participant_volume_control(true).await,
+        api.jam().remove_member("spotify:user:guest").await,
+    ] {
+        assert!(matches!(result, Err(Error::NotAuthenticated)));
+    }
+    let calls = mock.calls.lock().unwrap();
+    assert!(!calls.iter().any(|(method,args)| method=="service.call" && args["service"]=="SocialConnectAPI"));
+}
+
+#[tokio::test]
 async fn mutation_failures_are_returned_without_replaying_the_write() {
     let mock = MockBrowser::start().await;
     let api = Api::connect(&mock.endpoint).await.unwrap();
@@ -128,7 +149,17 @@ async fn mutation_failures_are_returned_without_replaying_the_write() {
             .await
             .is_err()
     );
-    assert!(matches!(api.jam().start().await, Err(Error::Unsupported)));
+    mock.response.lock().unwrap()["token"] = json!({});
+    assert!(matches!(
+        api.jam().start().await,
+        Err(Error::NotAuthenticated)
+    ));
+    mock.response
+        .lock()
+        .unwrap()
+        .as_object_mut()
+        .unwrap()
+        .remove("token");
     assert!(matches!(
         api.request("GET", "https://example.com/", None).await,
         Err(Error::InvalidInput(_))

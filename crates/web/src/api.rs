@@ -417,19 +417,9 @@ impl Api {
         if service.is_empty() || method.is_empty() || method.starts_with('_') {
             return Err(Error::InvalidInput("invalid browser service method"));
         }
-        // Browser SocialConnect state can activate a session while being read.
-        // Membership reads and explicit lifecycle writes use the HTTP endpoints.
-        let result = if self.inner.browser.is_none()
-            || (service == "SocialConnectAPI"
-                && matches!(
-                    method,
-                    "fetchCurrentSession"
-                        | "createSession"
-                        | "deleteSession"
-                        | "leaveSession"
-                        | "reorderQueue"
-                        | "joinSession"
-                )) {
+        // Constructing the browser SocialConnect service can activate a session.
+        // All Jam helpers stay on direct services, including invitation reads.
+        let result = if self.inner.browser.is_none() || service == "SocialConnectAPI" {
             crate::direct::service(self, service, method, &args).await
         } else {
             self.call(

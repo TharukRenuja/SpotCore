@@ -180,3 +180,15 @@ Direct services-only checks with saved accounts verified:
 - Unchanged playback state and current track throughout those checks.
 
 Native routing is covered by mocks; no native player was launched. Positional insertion, multi-item insertion and clearing are covered by offline checks, but were not exercised by that live probe.
+
+## Jam session safety
+
+All `SocialConnectAPI` helpers use direct HTTP services, including availability, invitation preview/link generation and permission changes. Browser-backed callers never instantiate the page’s Social Connect service through these helpers, so those reads cannot activate a replacement Jam after End. Only explicit Start uses the activating endpoint.
+
+### Passive host discovery
+
+Passive membership reads require `active: true` before adopting an owner session that this API instance did not explicitly start. An explicit Start can establish an owner session before guests arrive. End retires that identity and clears the explicit-start evidence, so an unconfirmed replacement owner session cannot revive the invitation card. Active Jams started on another client are still discovered; guest membership does not require the host-session activation flag.
+
+## Native receiver activity
+
+Native snapshots with an explicit inactive-receiver flag report Idle even when a cached status still says playing or paused. Device activity changes request a fresh local state snapshot without activating or transferring playback.

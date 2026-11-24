@@ -49,6 +49,7 @@ impl JamSession {
 #[derive(Default)]
 pub(crate) struct State {
     joined: Option<Joined>,
+    started: Option<String>,
     retired: HashSet<String>,
     cached: Option<(Instant, Value)>,
 }
@@ -88,7 +89,11 @@ fn member_session(raw: Value, expected: &str, username: &str) -> Option<Value> {
 impl State {
     fn accept(&self, value: Value) -> Value {
         let value = normalize(value);
-        if session_id(&value).is_some_and(|id| self.retired.contains(id)) {
+        let id = session_id(&value);
+        let unconfirmed_host = value["is_session_owner"] == true
+            && value["active"] != true
+            && id != self.started.as_deref();
+        if unconfirmed_host || id.is_some_and(|id| self.retired.contains(id)) {
             Value::Null
         } else {
             value
@@ -96,6 +101,9 @@ impl State {
     }
     fn retire(&mut self, id: &str) {
         self.retired.insert(id.to_owned());
+        if self.started.as_deref() == Some(id) {
+            self.started = None;
+        }
         if self.joined.as_ref().is_some_and(|joined| joined.id == id) {
             self.joined = None;
         }
@@ -154,6 +162,9 @@ async fn read(api: &Api, state: &mut State) -> Result<Value, Error> {
         }) => Value::Null,
         Err(error) => return Err(error),
     };
+    if value.is_null() {
+        state.started = None;
+    }
     if let Some(joined) = &state.joined {
         if value.is_null() && !state.retired.contains(&joined.id) {
             let info = match api
@@ -245,12 +256,13 @@ pub(crate) async fn start(api: &Api) -> Result<Value, Error> {
             None,
         )
         .await?;
-    let created = state.accept(created);
-    if session_id(&created).is_none() {
-        return Err(Error::Backend(
-            "Spotify did not identify the created Jam".into(),
-        ));
-    }
+    let created = normalize(created);
+    let id = session_id(&created)
+        .ok_or_else(|| Error::Backend("Spotify did not identify the created Jam".into()))?
+        .to_owned();
+    // The activating response is evidence of an explicit Start, even before guests arrive.
+    state.retired.remove(&id);
+    state.started = Some(id);
     state.cached = Some((Instant::now(), created.clone()));
     Ok(created)
 }
@@ -334,6 +346,49 @@ pub(crate) async fn join(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn passive_host_placeholders_cannot_replace_an_ended_jam() {
+        let mut state = State {
+            started: Some("ended".into()),
+            ..Default::default()
+        };
+        state.retire("ended");
+        for active in [Value::Null, json!(false)] {
+            assert!(
+                state
+                    .accept(
+                        json!({"session_id":"replacement","is_session_owner":true,"active":active})
+                    )
+                    .is_null()
+            );
+        }
+        assert_eq!(
+            session_id(
+                &state
+                    .accept(json!({"session_id":"official","is_session_owner":true,"active":true}))
+            ),
+            Some("official")
+        );
+        state.started = Some("explicit".into());
+        assert_eq!(
+            session_id(&state.accept(json!({"session_id":"explicit","is_session_owner":true}))),
+            Some("explicit")
+        );
+        assert_eq!(
+            session_id(
+                &state
+                    .accept(json!({"session_id":"guest","is_session_owner":false,"active":false}))
+            ),
+            Some("guest")
+        );
+        state.retire("explicit");
+        assert!(
+            state
+                .accept(json!({"session_id":"explicit","is_session_owner":true}))
+                .is_null()
+        );
+    }
+
     #[test]
     fn retired_membership_cannot_reappear_but_a_different_jam_can() {
         let mut state = State::default();

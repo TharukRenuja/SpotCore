@@ -292,6 +292,7 @@ impl SoloistBackend {
                         SoloistServerEvent::DeviceChanged(e) => {
                             if let Some(v) = e.is_active {
                                 let _ = active_tx.send(v);
+                                let _ = activate_tx.send(CommandPayload::get_state()).await;
                             }
                         }
                         _ => {}
@@ -453,6 +454,7 @@ impl SoloistBackend {
 
     fn map_snapshot(ev: &PlaybackStateEvent) -> PlayerSnapshot {
         let state = match ev.status.as_str() {
+            _ if ev.is_active == Some(false) => PlaybackState::Idle,
             "playing" => PlaybackState::Playing,
             "paused" => PlaybackState::Paused,
             _ => PlaybackState::Idle,
@@ -463,7 +465,7 @@ impl SoloistBackend {
         let duration_ms = track.as_ref().and_then(|t| t.duration_ms);
         let position_ms = ev.position.as_ref().map(|p| p.position_ms).unwrap_or(0);
         let timestamp_ms = ev.position.as_ref().map(|p| p.timestamp_ms);
-        let buffering = ev.status == "buffering";
+        let buffering = ev.status == "buffering" && ev.is_active != Some(false);
         let shuffle = ev.options.as_ref().map(|o| o.shuffle).unwrap_or(false);
         let repeat = match ev.options.as_ref().map(|o| o.repeat.as_str()) {
             Some("track") => RepeatMode::Track,
@@ -589,6 +591,20 @@ fn update_login_state(sender: &watch::Sender<bool>, event: &serde_json::Value) -
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn inactive_receiver_cannot_report_itself_as_playing_or_paused() {
+        for status in ["playing", "paused", "buffering"] {
+            let event: PlaybackStateEvent = serde_json::from_value(
+                serde_json::json!({"status":status,"is_active":false,"volume":75}),
+            )
+            .unwrap();
+            let snapshot = SoloistBackend::map_snapshot(&event);
+            assert_eq!(snapshot.state, PlaybackState::Idle);
+            assert_eq!(snapshot.volume, Some(0.75));
+            assert!(!snapshot.buffering);
+        }
+    }
 
     #[test]
     fn decorated_native_state_keeps_duration_context_volume_and_position() {
