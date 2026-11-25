@@ -1,10 +1,10 @@
 # Quickstart
 
-**Requires Rust 1.89 or newer.** The example below builds from source with your app and SpotCore in sibling directories. For a pinned Git dependency, see [installation](installation.md).
+**Requires Rust 1.89 or newer.** Add the SDK and async runtime to the application’s `Cargo.toml`. The dependency below pins a release; [installation](installation.md) also covers local source development.
 
 ```toml
 [dependencies]
-spotcore = { path = "../SpotCore" }
+spotcore = { git = "https://github.com/TharukRenuja/SpotCore.git", tag = "v0.2.0" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
 ```
 
@@ -48,7 +48,7 @@ The example reads `SPOTCORE_COOKIE_FILE`. The builder does not read it automatic
 
 ## Services only: skip local playback setup
 
-Use this when your app needs Spotify data or controls an existing Connect device. In this example, `launch()` starts an authenticated SDK session. **it does not open a browser**.
+Use this when your app needs Spotify data or controls an existing Connect device. In this example, `launch()` starts an authenticated SDK session. **It does not open a browser**.
 
 ```rust
 use spotcore::{BrowserRole, SpotCore};

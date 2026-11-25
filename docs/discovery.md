@@ -47,6 +47,8 @@ Home preserves greeting, filter chips, shelf order and raw data. Use returned fa
 
 `Page::next_offset` advances by raw rows, including unrecognized cards. Follow that offset instead of calculating it from the mapped item count. Unknown fields/cards remain available in raw responses. `Paging` accepts limits 1–100.
 
+Browse category normalization accepts plain-string titles and the `text`/`transformedLabel` title forms. Cards without a readable title are omitted. Alternate nested BrowseCard representations are resolved from the same response without a second network request.
+
 ## Recommendations and radio
 
 ```rust
@@ -67,7 +69,7 @@ async fn recommendations(spotify: &SpotCore, track_uri: String) -> Result<(), sp
 
 ## Podcasts and audiobooks
 
-`podcasts()` exposes shows, episodes, paged episodes, audiobook metadata and chapters, plus saved-episode reads/writes. Audiobook metadata can be returned as JSON. Reading a catalog item does not establish playback entitlement, and audiobook progress/save parity is not guaranteed. LK podcast restrictions and successful US reads were observed. Handle regional errors rather than treating every empty search as an SDK failure.
+`podcasts()` exposes shows, episodes, paged episodes, audiobook metadata and chapters, plus saved-episode reads/writes. Audiobook metadata can be returned as JSON. Reading a catalog item does not establish playback entitlement, and audiobook progress/save parity is not guaranteed. Check [account availability](availability.md) before offering regional features, and handle item-level restrictions on each request. An empty successful search and a regional denial are different outcomes.
 
 ## Home method reference
 
@@ -119,6 +121,7 @@ Receiver arguments are omitted. `Value` means `serde_json::Value`. The return co
 | `similar_albums(value: &str, limit: u32)` | `Result<Value, Error>` | Read album-context suggestions. |
 | `radio_blend(seed_tracks: &[String], seed_artists: &[String], limit: u32)` | `Result<Vec<MediaItem>, Error>` | Interleave separate single-seed radios. Not joint multi-seed ranking. |
 | `recommendations(seed_tracks: &[String], seed_artists: &[String], limit: u32)` | `Result<Vec<MediaItem>, Error>` | Call the separate multi-seed endpoint. Handle upstream rate limits, including HTTP 429. |
+| `statistics(value: &str)` | `Result<CatalogStatistics, Error>` | Read available album/artist play counts and optional monthly listeners. |
 | `track_info(value: &str)` | `Result<TrackInfo, Error>` | Read typed detailed metadata. |
 | `album_info(value: &str)` | `Result<AlbumInfo, Error>` | Read typed detailed metadata. |
 | `artist_info(value: &str)` | `Result<ArtistInfo, Error>` | Read typed detailed metadata. |

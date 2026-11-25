@@ -11,10 +11,7 @@ Just fetching data or controlling another device? With a cookie, you don’t nee
 | `BrowserEngine::Chromium` | Installed Chromium-family browser | Playback where DRM and codecs work |
 | `BrowserEngine::System` | `spotcore-system-engine` | Experimental browser services adapter. Not a Web playback backend |
 
-Every managed browser backend runs through the common process supervisor, either
-the standalone `spotcore-engine` launcher or an application that embeds it. Browser
-helper processes retain their own executable names. Native playback and externally
-attached CDP sessions are not wrapped.
+Every managed browser backend runs through the common process supervisor, either the standalone `spotcore-engine` launcher or an application that embeds it. Browser helper processes retain their own executable names. Native playback and externally attached CDP sessions are not wrapped.
 
 ```sh
 cargo build -p spotcore-engine --release --locked
@@ -26,9 +23,7 @@ Install QtWebEngine development packages before building the Qt host. Package `t
 
 ## Embed the launcher
 
-Applications can compile the existing supervisor into their own executable.
-Run these hooks at the beginning of `main`, before argument parsing, a runtime,
-single-instance checks or GUI initialization:
+Applications can compile the existing supervisor into their own executable. Run these hooks at the beginning of `main`, before argument parsing, a runtime, single-instance checks or GUI initialization:
 
 ```rust
 if let Some(code) = spotcore::host::run_embedded_launcher() {
@@ -37,15 +32,9 @@ if let Some(code) = spotcore::host::run_embedded_launcher() {
 spotcore::host::enable_embedded_launcher()?;
 ```
 
-The opt-in applies to managed browser sessions and interactive login throughout
-the process. Each helper launch executes the application with the internal
-`--spotcore-engine` argument. The same supervisor handles parent lifetime,
-process groups/jobs, literal arguments and exit status. Native playback bypasses
-it. `SPOTCORE_LAUNCHER` overrides the embedded choice when explicitly supplied.
+The opt-in applies to managed browser sessions and interactive login throughout the process. Each helper launch executes the application with the internal `--spotcore-engine` argument. The same supervisor handles parent lifetime, process groups/jobs, literal arguments and exit status. Native playback bypasses it. `SPOTCORE_LAUNCHER` overrides the embedded choice when explicitly supplied.
 
-Embedding requires no extraction, runtime file writes or separate launcher build.
-The browser backend, Qt runtime and DRM requirements are unchanged. Applications
-that do not opt in retain standalone-launcher discovery.
+Embedding requires no extraction, runtime file writes or separate launcher build. The browser backend, Qt runtime and DRM requirements are unchanged. Applications that do not opt in retain standalone-launcher discovery.
 
 The optional system helper builds with `cargo build -p spotcore-system-engine --release --locked`. Linux needs WebKitGTK 4.1/GTK development libraries. Windows uses WebView2 and macOS uses WKWebView. Cookie-backed HTTP is the simpler path for services and avoids loading these adapters.
 
@@ -109,19 +98,8 @@ For diagnosis, `headless(false)`, `no_cuts(true)` and `WebPlayerOptions { minima
 
 ### Saved HTTP startup
 
-`Api::from_credentials` can reuse an unexpired protected access token when the
-saved credentials also include its client ID and app version. Cookie renewal
-remains owned by the SDK. Export `Api::web_credentials()` only to protected
-credential storage. Older cookie-only records remain readable.
+`Api::from_credentials` can reuse an unexpired protected access token when the saved credentials also include its client ID and app version. Cookie renewal remains owned by the SDK. Export `Api::web_credentials()` only to protected credential storage. Older cookie-only records remain readable.
 
-Cookie renewal caches the public token-bootstrap recipe, client version and
-build version in `cache/cookie-bootstrap.json` under the API data root. Records
-are bounded to 8 KiB, expire after 24 hours, and are rediscovered if Spotify
-rejects the recipe. The file contains no user cookies or access tokens. Writes
-are atomic and run on the blocking pool. Missing or invalid caches use discovery.
+Cookie renewal caches the public token-bootstrap recipe, client version and build version in `cache/cookie-bootstrap.json` under the API data root. Records are bounded to 8 KiB, expire after 24 hours, and are rediscovered if Spotify rejects the recipe. The file contains no user cookies or access tokens. Writes are atomic and run on the blocking pool. Missing or invalid caches use discovery.
 
-`AccountManager::switch_to_with_services` accepts an early HTTP API clone, reuses
-its renewal/client-token state, and still verifies account identity before
-selecting it. Read-only GraphQL queries can retry once after a rejected token;
-mutations are not automatically replayed. Late 401 responses do not invalidate
-a newer token obtained by another request.
+`AccountManager::switch_to_with_services` accepts an early HTTP API clone, reuses its renewal/client-token state, and still verifies account identity before selecting it. Read-only GraphQL queries can retry once after a rejected token; mutations are not automatically replayed. Late 401 responses do not invalidate a newer token obtained by another request.

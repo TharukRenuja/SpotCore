@@ -169,9 +169,9 @@ Prefer `queues()` for new integrations. These existing methods remain available:
 
 The Jam service shim verifies membership, host receiver and edit permission before sending a bare `set_queue` command through the session. A guest's cluster receiver ID may differ from the host's, so shared edits validate the Jam's host identity and exact queue occurrences instead of requiring those receiver IDs to match.
 
-## Verification coverage
+## Validation scope
 
-Direct services-only checks with saved accounts verified:
+Live HTTP-services checks have covered:
 
 - Guest join, repeated leave and deliberate rejoin.
 - Guest reorder without duplication, followed by restoration of the original order.
@@ -179,7 +179,7 @@ Direct services-only checks with saved accounts verified:
 - Host End, with independent membership reads remaining empty immediately and at delayed checks.
 - Unchanged playback state and current track throughout those checks.
 
-Native routing is covered by mocks; no native player was launched. Positional insertion, multi-item insertion and clearing are covered by offline checks, but were not exercised by that live probe.
+Native routing, positional insertion, multi-item insertion and clearing have offline test coverage. This does not establish live native playback or compatibility with every receiver, account or Jam configuration. Validate those paths on the target integration before shipping.
 
 ## Jam session safety
 

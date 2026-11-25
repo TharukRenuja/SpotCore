@@ -21,36 +21,13 @@ async fn login() -> Result<(), spotcore::Error> {
 
 Interactive login is optional and requires a browser host. `.profile_dir(path)` reuses a browser profile. `.data_dir(root)` places SDK state under an explicit root. `SPOTCORE_DATA_DIR` overrides the default root. Use `.app_id("my-app")?` for an application subdirectory under the default root. Default paths follow each OS's application-data conventions.
 
-**Managed login closes automatically after verification.** The dedicated window
-requests a 520 × 720 size, centered on the available screen and reduced for
-smaller screens. The window manager may control its final position. Your normal
-browser windows are not closed.
+**Managed login closes automatically after verification.** The dedicated window requests a 520 × 720 size, centered on the available screen and reduced for smaller screens. The window manager may control its final position. Your normal browser windows are not closed.
 
-Apps that save credentials themselves can use the builder's `.login_with(callback).await?`
-method. The async callback receives a verified HTTP `Api` and returns a
-`Result<T, spotcore::Error>`. Obtain credentials with `api.web_credentials().await?`.
-**Return success only after saving those credentials to your vault.** The window closes after callback success. A
-failed save leaves it open until the user closes it, and is not retried. Plain
-`.login().await?` verifies the account and closes the window, retaining the
-isolated browser profile without saving credentials to an app-provided vault.
-Rebuild Qt or system engine helpers when updating to this managed login flow.
+Apps that save credentials themselves can use the builder's `.login_with(callback).await?` method. The async callback receives a verified HTTP `Api` and returns a `Result<T, spotcore::Error>`. Obtain credentials with `api.web_credentials().await?`. **Return success only after saving those credentials to your vault.** The window closes after callback success. A failed save leaves it open until the user closes it, and is not retried. Plain `.login().await?` verifies the account and closes the window, retaining the isolated browser profile without saving credentials to an app-provided vault. Rebuild Qt or system engine helpers when updating to this managed login flow.
 
-After verifying a browser account, AccountManager captures its `sp_dc` through
-the local browser protocol and saves it in the protected credential store.
-Services mode can then close the owned browser and use renewable HTTP services.
-A successful native startup can also release the browser. Web playback keeps
-its browser. If a helper cannot export the cookie, the session remains
-browser-backed. Successful browser login is not proof of browser-free services.
+After verifying a browser account, AccountManager captures its `sp_dc` through the local browser protocol and saves it in the protected credential store. Services mode can then close the owned browser and use renewable HTTP services. A successful native startup can also release the browser. Web playback keeps its browser. If a helper cannot export the cookie, the session remains browser-backed. Successful browser login is not proof of browser-free services.
 
-`api.http_services(&paths).await` returns a separate HTTP `Api` and redacted-debug
-`WebCredentials`. It reads only the Spotify session cookie and obtains HTTP access
-through the SDK's cookie renewal path. It neither persists credentials nor closes
-the source browser. Verify `users().me()` against the expected account before
-switching. AccountManager performs that check before saving the credential or
-releasing the browser. If HTTP verification cannot complete, it retains the
-working browser session without saving an unverified cookie.
-Store the returned credentials only in a vault. Missing, ambiguous, foreign-domain
-or malformed cookies fail rather than creating an unauthenticated HTTP client.
+`api.http_services(&paths).await` returns a separate HTTP `Api` and redacted-debug `WebCredentials`. It reads only the Spotify session cookie and obtains HTTP access through the SDK's cookie renewal path. It neither persists credentials nor closes the source browser. Verify `users().me()` against the expected account before switching. AccountManager performs that check before saving the credential or releasing the browser. If HTTP verification cannot complete, it retains the working browser session without saving an unverified cookie. Store the returned credentials only in a vault. Missing, ambiguous, foreign-domain or malformed cookies fail rather than creating an unauthenticated HTTP client.
 
 `SpotCore::connect("http://127.0.0.1:9222").await?` attaches to an existing Spotify browser tab. Use a dedicated profile and a loopback CDP endpoint: the debugger grants broad access to that browser. Attached browsers retain their own credentials and are not closed by SDK shutdown.
 
@@ -65,6 +42,7 @@ async fn select_account(username: &str, sp_dc: String) -> Result<(), spotcore::E
     let mut profile = AccountProfile::new(username);
     profile.web = Some(WebCredentials {
         sp_dc: Some(sp_dc), access_token: None, expires_at_ms: None,
+        client_id: None, app_version: None,
     });
     accounts.switch_with(profile).await?;
     accounts.close().await?;
@@ -127,6 +105,6 @@ Legacy plaintext profile migration preserves data if vault storage fails. The re
 
 `AccountManager::authenticate_account(cookie)` returns an owned, cancellable future. Pass `None` for managed Spotify login or `Some(cookie)` for cookie verification. Creating the future does not borrow the manager for its lifetime, so the current account can continue handling controls while authentication is polled on the SDK runtime.
 
-The operation uses an isolated temporary profile, verifies the account and exported renewable credentials, and saves the profile before allowing the login window to close. It preserves existing Native credentials/preferences for that identity and does not select the new account, start music or transfer playback. Existing `login(id)` and `switch_to(id)` keep their behavior.
+The operation uses an isolated temporary profile, verifies the account and exported renewable credentials, and saves the profile before allowing the login window to close. It preserves existing Native credentials/preferences for that identity and does not select the new account, start music or transfer playback. Use `switch_to(id)` to select a stored account; use `login(id)` to reauthenticate a known account in its isolated profile.
 
-Dropping the future cancels pending login work. Temporary profile cleanup is scheduled on the runtime; an OS-profile cleanup failure or shutdown can leave an isolated directory under `pending-logins` for later removal. If cancellation happens during a credential-store write, saving may have completed: list saved accounts before retrying. Never ask users to close the Spotify window to signal successful authentication.
+Dropping the future cancels pending login work. Temporary profile cleanup is scheduled on the runtime; an OS-profile cleanup failure or shutdown can leave an isolated directory under `pending-logins` for later removal. If cancellation happens during a credential-store write, saving may have completed: list saved accounts before retrying. Await the authentication result before presenting success. Closing the Spotify window is not a successful authentication signal.

@@ -91,17 +91,8 @@ Playback APIs accept `Duration`. Snapshot/media fields ending in `_ms` are milli
 
 Collection items retain row-level `addedAt`, `added_at`, `addedBy`, `added_by` and `uid` fields in `MediaItem.raw` alongside the entity payload when Spotify supplies them. Clients can use these fields for added-date and contributor columns without a second request. Missing fields remain unknown.
 
-`EpisodeInfo::try_from(MediaItem)` normalizes episode metadata already present
-in collection rows, including episodeDuration and parent show variants, while
-retaining the base item's duration and artwork as fallbacks. Playlist row reads
-fill sparse episode details with four concurrent lookups and an eight-second
-per-page budget. Failed lookups leave the original rows intact.
+`EpisodeInfo::try_from(MediaItem)` normalizes episode metadata already present in collection rows, including episodeDuration and parent show variants, while retaining the base item's duration and artwork as fallbacks. Playlist row reads fill sparse episode details with four concurrent lookups and an eight-second per-page budget. Failed lookups leave the original rows intact.
 
-`extras().radio_tracks(seed, limit)` accepts Spotify radio results that resolve
-to either playlist/playlist_v2 URIs or station contexts. Playlists use playlist
-reads. Stations use the context resolver and normalize inline tracks, including
-binary Spotify IDs, before bounded metadata enrichment. A station URI is never
-passed to playlist GraphQL queries. Radio blending uses the same resolver.
+`extras().radio_tracks(seed, limit)` accepts Spotify radio results that resolve to either playlist/playlist_v2 URIs or station contexts. Playlists use playlist reads. Stations use the context resolver and normalize inline tracks, including binary Spotify IDs, before bounded metadata enrichment. A station URI is never passed to playlist GraphQL queries. Radio blending uses the same resolver.
 
-Station rows missing artist credits also request catalog metadata within the
-existing bounded completion pass, even when title, cover and duration are present.
+Station rows missing artist credits also request catalog metadata within the existing bounded completion pass, even when title, cover and duration are present.

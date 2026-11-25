@@ -37,38 +37,38 @@ Premium hosting requires an available Connect receiver on the same account. The 
 use spotcore::SpotCore;
 
 async fn host_jam(spotify: &SpotCore) -> Result<(), spotcore::Error> {
-    spotify.jam().start().await?;
-    let session = spotify.jam().session().await?;
-    if let Some(id) = session["session_id"].as_str() {
-        let invite = spotify.jam().invite_link(id).await?;
-        println!("{}", invite["shareableUrl"]);
+    let jam = spotify.jam();
+    let session = jam.start_session().await?;
+    let invite = jam.invitation_url(&session.id).await?;
+    println!("{invite}");
+    Ok(())
+}
+```
+
+Keep the Jam active while sharing. Call `jam().end().await?` when the host chooses to end it. Avoid starting a new Jam over an unrelated existing session: read `state()` first before enabling Start.
+
+**Host workflow:** explicitly start a Jam, retain the typed session, generate its HTTPS invite, and end it when the host chooses. Invites use the current device's session and reject mismatched session IDs.
+
+## Join a Jam as a guest
+
+Use `jam().join_on(invite, ListenOn::Host)` to join and control the host's receiver without requiring a local player. Use `ListenOn::ThisDevice` only when the account and receiver support listening locally. The joining account must differ from the host. `join_on()` returns optional confirmed membership. Enable guest controls only after receiving `Some(JamSession)`. Its permissions describe the current session; writes can still be rejected.
+
+Invites may be full `https://open.spotify.com/socialsession/<token>` links, `spotify:socialsession:<token>` URIs or bare tokens. Resolve short `spotify.link` URLs with `extras().resolve_share_url()` first. The low-level `join()` method selects a target from account tier; `join_as()` accepts an explicit boolean target. Prefer `join_on()` when the application presents that choice.
+
+```rust
+use spotcore::{SpotCore, web::ListenOn};
+
+async fn join_jam(spotify: &SpotCore, invite: &str) -> Result<(), spotcore::Error> {
+    let jam = spotify.jam();
+    jam.session_info(invite).await?;
+    if let Some(session) = jam.join_on(invite, ListenOn::Host).await? {
+        println!("Joined {}", session.id);
     }
     Ok(())
 }
 ```
 
-Keep the Jam active while sharing. Call `jam().end().await?` when the host chooses to end it. Avoid starting a new Jam over an unrelated existing session: read `session()` first in production UI.
-
-**Host workflow:** start a Jam, read the current session, generate its HTTPS invite, and end it when the host chooses. Invites use the current device's session and reject mismatched session IDs.
-
-## Join a Jam as a guest
-
-A guest joins with the token from a host's invite. Pass the full `https://open.spotify.com/socialsession/<token>` link, a `spotify:socialsession:<token>` URI, or the bare token to `jam().join()`. The SDK reads the signed-in account's tier and sends the token to Spotify's session-join endpoint as a deeplinking join. A Premium guest requests `listen_and_control` playback and can play on their own device; a Free or unknown-tier guest requests `control` playback, joining and adding to the queue while audio plays on the host's device. When the guest account has a receiver, the SDK includes its device id; otherwise the join omits it. The joining account must be different from the host.
-
-`jam().join_as(token, listen_on_device)` makes that choice explicit for an interface that offers both targets. Pass `true` to ask for playback on this account's own device, or `false` for the host's device. Spotify still decides whether the account may use `listen_and_control`, so a Free account asking for its own device is rejected. Short `spotify.link` invites redirect to the `open.spotify.com/socialsession` form and must be resolved before either method.
-
-```rust
-use spotcore::SpotCore;
-
-async fn join_jam(spotify: &SpotCore, invite: &str) -> Result<(), spotcore::Error> {
-    let info = spotify.jam().session_info(invite).await?;
-    println!("Joining {}", info["session_id"]);
-    spotify.jam().join(invite).await?;
-    Ok(())
-}
-```
-
-Call `session_info()` first to preview the Jam and confirm the invite is still valid. Read `session()` after joining to confirm the guest now has an active Jam. Spotify can still reject a join with HTTP 403 `USER_NOT_ALLOWED` for account, region or eligibility rules; treat a rejection as terminal rather than retrying. Guest track control remains unverified across accounts. Never publish private invite tokens in logs.
+Call `session_info()` first to preview the Jam and confirm the invite is still valid. Use `state()` or `refresh()` for subsequent typed membership reads. Spotify can still reject a join with HTTP 403 `USER_NOT_ALLOWED` for account, region or eligibility rules; treat a rejection as terminal rather than retrying. Guest track control remains unverified across accounts. Never publish private invite tokens in logs.
 
 `availability()` returns client configuration (`ENABLED`), not server-confirmed hosting eligibility. When no Jam is active, `session()` returns `null` without an error. This lookup is per-device, not an account-wide session index.
 
@@ -81,6 +81,10 @@ Receiver arguments are omitted. `Value` means `serde_json::Value`. The return co
 | Method and inputs | Returns | Behavior |
 | --- | --- | --- |
 | `radio_uri(seed: &str)` | `Result<Option<String>, Error>` | Resolve an optional single-seed radio context. Malformed data is an error. |
+| `lyrics_info(value: &str)` | `Result<Option<SpotifyLyrics>, Error>` | Normalize lyrics; only HTTP 404 returns None. Parse failures remain errors. |
+| `chapter_markers(value: &str)` | `Result<ChapterMarkers, Error>` | Read display-segment timestamps and their source. Not playable audiobook chapters. |
+| `prerelease_info(value: &str)` | `Result<PrereleaseInfo, Error>` | Resolve countdown identity, album metadata and optional release date. |
+| `resolve_share_url(value: &str)` | `Result<String, Error>` | Resolve Spotify-controlled HTTPS redirects without authorization headers. |
 | `lyrics(value: &str)` | `Result<Value, Error>` | Read available lyric data. Missing lyrics can return 404. |
 | `canvas(value: &str)` | `Result<Value, Error>` | Read available Canvas video metadata. |
 | `credits(value: &str)` | `Result<Value, Error>` | Read track credit metadata. |
@@ -96,6 +100,7 @@ Receiver arguments are omitted. `Value` means `serde_json::Value`. The return co
 
 | Method and inputs | Returns | Behavior |
 | --- | --- | --- |
+| `items(paging: Paging)` | `Result<Page<MediaItem>, Error>` | Read grouped recent entities with offset continuation. Not a timestamped play log. |
 | `entries(paging: Paging)` | `Result<Value, Error>` | Read original grouped recent-listening rows. Not recent searches. |
 
 ## Users method reference
@@ -105,6 +110,11 @@ Receiver arguments are omitted. `Value` means `serde_json::Value`. The return co
 | Method and inputs | Returns | Behavior |
 | --- | --- | --- |
 | `update_profile(name: &str, image: Option<&[u8]>)` | `Result<(), Error>` | Update the current account name and optionally its JPEG photo. |
+| `availability()` | `Result<AccountAvailability, Error>` | Evaluate country, tier and account feature policy. |
+| `rankings(range: TimeRange, limit: u32)` | `Result<UserRankings, Error>` | Typed track and artist affinity rankings for a Spotify-defined period. |
+| `profile_info(value: &str)` | `Result<UserProfileInfo, Error>` | Typed public profile with optional fields and retained raw data. |
+| `followers_info(value: &str)` / `following_info(value: &str)` | `Result<Vec<ProfileCard>, Error>` | Normalize public profile cards. |
+| `activity()` | `Result<Vec<FriendActivity>, Error>` | Normalize available friend activity. |
 | `me()` | `Result<Account, Error>` | Resolve current profile, canonical identity, tier and country. |
 | `profile(value: &str)` | `Result<Value, Error>` | Read a public user profile. |
 | `followers(value: &str)` | `Result<Value, Error>` | Read the user’s followers. |
@@ -125,6 +135,10 @@ Receiver arguments are omitted. `Value` means `serde_json::Value`. The return co
 
 | Method and inputs | Returns | Behavior |
 | --- | --- | --- |
+| `start_session()` | `Result<JamSession, Error>` | Explicit Premium-checked hosting; reuse an owned session and reject starting while a guest. |
+| `state()` / `refresh()` | `Result<Option<JamSession>, Error>` | Read typed membership; refresh forces a new service read. Neither creates a Jam. |
+| `join_on(token: &str, target: ListenOn)` | `Result<Option<JamSession>, Error>` | Join with an explicit host/local listening target. |
+| `invitation_url(session_id: &str)` | `Result<String, Error>` | Validate the current Jam's HTTPS invitation URL. |
 | `availability()` | `Result<Value, Error>` | Return client configuration, not server-confirmed account eligibility. |
 | `session()` | `Result<Value, Error>` | Read the selected device’s Jam, or null when absent. |
 | `start()` | `Result<Value, Error>` | Request hosting. Premium and a Connect receiver are required. |

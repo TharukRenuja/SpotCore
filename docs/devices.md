@@ -23,7 +23,7 @@ Device models expose identity, active/local flags, volume, restriction and quali
 
 `play_on(device_id, uri)` starts content on that receiver, which may become active. `execute_on(device_id, command)` sends supported Connect controls directly without pulling playback into SpotCore. These use HTTP even when a Web session is attached.
 
-Explicit targeting rejects missing/restricted devices. It does not borrow the active device's state for an inactive receiver. State-dependent queue replacement and Smart Shuffle are unavailable for inactive devices. Nested `Command::On`, quality changes, multi-item queue adds and browser-only queue edits are unsupported through this path.
+Explicit targeting rejects missing/restricted devices. It does not borrow the active device's state for an inactive receiver. State-dependent queue replacement and Smart Shuffle are unavailable for inactive devices. Nested `Command::On` and quality changes are unsupported through this path. Queue commands use the shared HTTP queue service, retain receiver/Jam scope checks and support multiple additions. Handle partial completion when a batch fails.
 
 ## Remote quality
 

@@ -1,6 +1,6 @@
 # Typed services and metadata recovery
 
-The typed helpers centralize Spotify response variants and safe operation sequencing. Existing raw APIs remain available. Applications still own navigation, presentation, refresh timing, optimistic display changes and GPU artwork caches.
+The typed helpers centralize Spotify response variants and safe operation sequencing. Existing raw APIs remain available. Applications own navigation, presentation, refresh scheduling, optimistic state and image rendering. Service methods are available through `SpotCore` or an authenticated `Api`; playback workflows require a `SpotCore` session. Method names below omit the receiver unless shown explicitly.
 
 ## Progressive metadata recovery
 
@@ -14,7 +14,7 @@ Recovery supports tracks, episodes, chapters, albums, artists, playlists, shows 
 
 Complete feed cards seed the session cache before recovery. Enrichment preserves occurrence UIDs, requested URIs, queue metadata and collection attribution, including Spotify relinking. Source artwork is returned as URLs; downloading, decoding, scaling and drawing images remain application responsibilities.
 
-Legacy queue and section convenience reads perform a bounded best-effort batch using the same resolver. They do not secretly drain an entire feed. Applications that need complete enrichment should use the explicit continuation API. The existing session cache is bounded and is not a persistent artwork database.
+Legacy queue and section convenience reads perform a bounded best-effort batch using the same resolver. They do not enrich every card in a feed. Applications that need complete enrichment should use the explicit continuation API. The existing session cache is bounded and is not a persistent artwork database.
 
 ## Typed metadata and services
 
@@ -45,18 +45,25 @@ Browse-category normalization also handles nested BrowseCard representations. Sh
 
 Use `jam.state()` or `jam.refresh()` for typed membership, `members()` for participant records, and `permissions()` for effective shared-host versus listen-here controls. Unknown participant-volume permission stays optional. These are snapshots; the server checks permissions again on writes.
 
-`jam.start_session()` is an explicit, Premium-checked creation operation. It refuses to start another Jam while this account is a guest. State reads, refreshes and invitations do not create sessions. `jam.join_on(token, ListenOn::Host)` does not require a ready local player. `ListenOn::ThisDevice` still requires the account and receiver to support that operation. Existing end/leave retirement safeguards remain unchanged.
+`jam.start_session()` is an explicit, Premium-checked creation operation. It refuses to start another Jam while this account is a guest. State reads, refreshes and invitations do not create sessions. `jam.join_on(token, ListenOn::Host)` does not require a ready local player. `ListenOn::ThisDevice` still requires the account and receiver to support that operation. End and leave retire the session identity so delayed membership responses cannot restore it.
 
 `queues.snapshot()` retains receiver/Jam scope and permissions. Keep the snapshot when editing. `snapshot.item_at(index, expected_uri)` resolves an exact occurrence, including repeated songs. `queues.skip_to(&snapshot, &item)` validates the current scope and delegates to the existing Connect skip command. Do not rebuild the queue to simulate a jump or reorder.
 
 ## Playback
 
-`wait_ready(timeout)` waits for the owned receiver without activation or transfer and honors rate-limit delays. Native repeat changes use Connect so both repeat flags are set together. Native volume reads prefer the actual receiver's reported value and do not invent a remembered 50 percent default. A missing supported value returns an error.
+`wait_ready(timeout)` waits for the owned receiver without activation or transfer and honors rate-limit delays. Native repeat changes use Connect so both repeat flags are set together. Native volume reads prefer the receiver's reported value, with the native snapshot as a fallback when volume is supported. If neither provides a value, `volume()` returns `Error::Unsupported`.
 
 `play_spoken(uri, position, device)` handles episode/chapter routing and confirms a Native selection before restoring a nonzero position. `play_audiobook(value, chapter, position, device)` applies account policy and verifies the selected chapter's membership/access. Without an explicit chapter it starts at chapter one. It rejects a resume offset without a chapter URI; automatic account-wide audiobook resume discovery is not implemented.
 
-`quality_report()` distinguishes `WebStream` from `DevicePreference`. `lossless_available` describes device/account capability and does not prove a delivered lossless stream. Audio processing, OS output gain and visualizer rendering remain application responsibilities.
+`quality_report()` distinguishes `WebStream` from `DevicePreference`. `lossless_available` describes device/account capability and does not prove a delivered lossless stream. Audio processing and OS output configuration remain application responsibilities.
 
-## Migration
+## Adopting typed workflows
 
-Adopt one typed workflow at a time, then delete the matching client-side parser or workaround after verification. Preserve the client's event channels, cancellation, optimistic display and account-generation fences. Do not run old and new mutation implementations together. No SpotDesk dependency change is part of this SDK branch.
+Replace one raw-response integration at a time. Compare identifiers, optional fields, pagination and failure behavior before removing an application parser. Keep cancellation, optimistic state and per-account request isolation intact. Send each mutation through one implementation; do not execute the raw and typed write paths together.
+
+Typed helpers normalize supported response variants. Check these compatibility limits when adopting them:
+
+- **Profiles:** `UserProfileInfo::raw` retains fields outside the normalized profile.
+- **Recent items:** `recents().items()` returns grouped recent entities, not a complete timestamped play log.
+- **Lyrics:** the typed parser requires a `lyrics.lines` array, including for instrumental responses. Use `extras().lyrics()` for payloads an application handles outside the typed parser.
+- **Errors:** a parse error, HTTP 404 and an empty successful result have different meanings. Preserve those distinctions in the application.

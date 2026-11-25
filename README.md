@@ -12,14 +12,14 @@
 
 ## Add to your app
 
-**Requires Rust 1.89 or newer.** Cargo can build SpotCore directly from GitHub without a crates.io package. After the `v0.2.0` release tag is published, add:
+**Requires Rust 1.89 or newer.** Cargo can build SpotCore directly from GitHub without a crates.io package.
 
 ```toml
 [dependencies]
 spotcore = { git = "https://github.com/TharukRenuja/SpotCore.git", tag = "v0.2.0" }
 ```
 
-**Use a published tag or pin a full commit with `rev`, then commit your application's `Cargo.lock`.** Version `0.2.0` is the current source version; the version bump alone does not create a tag. Add `features = ["native"]` if your app needs Soloist support. See [installation](docs/installation.md) for a local source dependency and runtime setup.
+Pin a release tag or full commit and commit the application's `Cargo.lock` for reproducible builds. Add `features = ["native"]` for Soloist support. See [installation](docs/installation.md) for dependency options and runtime setup.
 
 ## Start playing
 
@@ -72,6 +72,8 @@ SpotCore is licensed under [GPL-3.0](LICENSE). See [third-party notices](THIRD-P
 
 Use `BrowserRole::Services` for data and remote control without starting a browser. The default `launch()` prepares local playback immediately. **All modes use the same Spotify service APIs.**
 
+[Account availability](docs/availability.md) exposes region, tier and account restrictions. [Typed services and metadata recovery](docs/service-recovery.md) covers normalized metadata, partial results and background artwork recovery. Raw service responses remain available when an integration needs fields outside the typed models.
+
 ### What you can do
 
 | Feature | Answer |
@@ -82,7 +84,7 @@ Use `BrowserRole::Services` for data and remote control without starting a brows
 | Profiles, lyrics, Canvas and credits | **Yes, when Spotify provides them.** Availability depends on content and account. |
 | Play, pause, seek, shuffle and repeat | **Yes.** The target device and current content must allow the control. |
 | Add, clear, remove, insert and reorder queue rows | **Yes.** HTTP edits require an active receiver. Exact row edits use returned URI/UID pairs. |
-| Jump directly to a queue row | **Web session required.** HTTP-only sessions do not support skip-to. |
+| Jump directly to a queue row | **Yes, over HTTP Connect.** Requires a current visible row with an exact URI/UID and permission to skip. |
 | Playback events | **Web and native sessions.** Services-only apps poll state. |
 | Audio quality | **Web: up to VeryHigh. Native: device/account-supported levels.** A selected preference does not prove delivered audio quality. |
 | Host a Jam, share an invite and end it | **Yes, with Premium and an available Connect receiver.** Soloist can be the receiver. |
@@ -132,7 +134,7 @@ Use `BrowserRole::Services` for data and remote control without starting a brows
 
 ## Language bindings
 
-**Rust, Python, JavaScript/TypeScript, C#, Java, Kotlin, Swift, C, C++ and Go** are available. **Dart is experimental.** Each binding offers typed starter methods and access to all 172 service/playback operations through **`invoke()`**. Those broader operations use JSON arguments and results.
+**Rust, Python, JavaScript/TypeScript, C#, Java, Kotlin, Swift, C, C++ and Go** are available. **Dart is experimental.** Each binding offers typed starter methods and access to the service/playback operation inventory through **`invoke()`**. Those broader operations use JSON arguments and results.
 
 **Build bindings for the target OS and architecture.** They share the SDK’s runtime requirements and do not bundle playback engines. See the [binding matrix and setup](bindings/README.md).
 
@@ -141,6 +143,3 @@ Build the Rust API reference with `cargo doc -p spotcore --all-features --no-dep
 ## Special thanks
 
 Special thanks to **kota-zo and contributors** behind [**Orpheon**](https://github.com/kota-zo/Orpheon) (formerly **Myspoti**)! SpotCore builds on their browser bridge and Spotify API mappings. You’ll find the credits and license details in [third-party notices](THIRD-PARTY-NOTICES.md). Also an **honourable mention to [librespot](https://github.com/librespot-org/librespot)** and its contributors.
-### Typed account policy and service recovery
-
-The development branch adds [account availability](docs/availability.md) and [shared metadata recovery](docs/service-recovery.md), plus typed service helpers that replace application-specific Spotify parsers. Existing low-level APIs remain available. This work is unreleased; it does not change the published version or downstream dependencies.

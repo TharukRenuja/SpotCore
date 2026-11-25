@@ -13,10 +13,16 @@ async fn controls(spotify: &mut SpotCore) -> Result<(), spotcore::Error> {
     if spotify.capabilities().seek {
         spotify.seek(Duration::from_secs(45)).await?;
     }
-    spotify.set_repeat(RepeatMode::Context).await?;
-    spotify.set_shuffle_mode(ShuffleMode::Smart).await?;
-    let applied = spotify.set_quality(AudioQuality::VeryHigh).await?;
-    println!("Quality preference: {applied:?}");
+    if spotify.capabilities().repeat {
+        spotify.set_repeat(RepeatMode::Context).await?;
+    }
+    if spotify.capabilities().smart_shuffle {
+        spotify.set_shuffle_mode(ShuffleMode::Smart).await?;
+    }
+    if spotify.capabilities().quality {
+        let applied = spotify.set_quality(AudioQuality::VeryHigh).await?;
+        println!("Quality preference: {applied:?}");
+    }
     Ok(())
 }
 ```
@@ -26,25 +32,26 @@ async fn controls(spotify: &mut SpotCore) -> Result<(), spotcore::Error> {
 ## Queue rows
 
 ```rust
-use spotcore::{QueueItem, SpotCore};
+use spotcore::SpotCore;
 
-async fn queue(spotify: &mut SpotCore, track_uri: String) -> Result<(), spotcore::Error> {
-    spotify.add_to_queue(vec![track_uri]).await?;
-    let queue = spotify.queue().await?;
-    if let Some(row) = queue.queued.first()
-        && let Some(uid) = &row.uid
-    {
-        spotify.remove_from_queue(vec![QueueItem {
-            uri: row.uri.clone(), uid: uid.clone(),
-        }]).await?;
-    }
+async fn remove_queue_row(
+    spotify: &SpotCore,
+    index: usize,
+    expected_uri: &str,
+) -> Result<(), spotcore::Error> {
+    let queues = spotify.api.queues();
+    let snapshot = queues.snapshot().await?;
+    let item = snapshot.item_at(index, expected_uri)?;
+    queues.remove(&snapshot, &[item]).await?;
     Ok(())
 }
 ```
 
-`Queue` separates `current`, manually `queued`, and context `next_up` items. **Preserve exact URI/UID pairs for edits.** duplicate track URIs can represent different rows. `clear_queue()` clears user-queued items according to backend semantics.
+`Queue` separates `current`, manually `queued`, and context `next_up` items. Preserve exact URI/UID pairs: repeated track URIs can represent different rows. `snapshot.item_at(index, expected_uri)` addresses the upcoming rows in manual-then-context order and rejects a mismatched URI.
 
-`insert_into_queue(uris, before)` and `reorder_queue(items, before, after)` also have HTTP implementations using Connect's `set_queue` command. Reordering requires exactly one `before` or `after` anchor, identified by URI and UID. Missing, ambiguous and stale anchors are rejected. These HTTP payloads need live verification. `skip_to_queue(item)` remains browser-assisted. Applications may instead consume preceding rows with Next commands. HTTP supports a single item per queue-add command and restricts state-dependent edits to the active receiver. `devices().replace_queued(device, uris)` replaces the manual section in one HTTP write, preserving reusable row UIDs and context entries.
+Use `api.queues()` for edits against a `QueueSnapshot`. Its writes check the current receiver/Jam scope and permissions before submission. `insert_into_queue(uris, before)` and `reorder_queue(items, before, after)` also use HTTP Connect. Reordering requires exactly one exact `before` or `after` anchor; missing, ambiguous and stale anchors are rejected.
+
+`skip_to_queue(item)` and `queues().skip_to(&snapshot, &item)` use the HTTP Connect skip command. They require an exact visible upcoming occurrence and skip permission; they do not rebuild the queue or repeatedly send Next. Queue commands do not transfer playback. `devices().replace_queued(device, uris)` replaces the manual section while preserving reusable row UIDs and context entries. See [scoped queue operations](advanced.md#queue-services) for the full API.
 
 ## Podcasts and audiobooks
 
@@ -64,10 +71,7 @@ Use `MediaKind::Episode` and current seek/speed capabilities to show spoken-audi
 
 ## State and events
 
-Native snapshots retain Soloist's reported position speed in
-`PlayerSnapshot.raw["speed"]`. Consumers that interpolate progress should validate
-and use this rate when present. Speed controls still use the session's reported
-capability and the existing `set_speed` / Connect control path.
+Use `PlayerSnapshot::playback_speed()` for the validated optional rate when interpolating progress. Native snapshots also retain Soloist's reported rate in `raw["speed"]`. Speed controls require the current capability and use `set_speed()` through Connect.
 
 `refresh_state().await?` queries fresh state. `state()` is cached and does not run a clock. Web/HTTP refreshed positions account for elapsed time and speed, stop advancing while paused/buffering and clamp to duration. Optional device/volume fields may be absent.
 
@@ -94,27 +98,13 @@ async fn native(sp_dc: String, api_key: String) -> Result<(), spotcore::Error> {
 }
 ```
 
-This example requires `spotcore = { path = "../SpotCore", features = ["native"] }`.
+Enable `features = ["native"]` on the pinned SpotCore dependency for this example.
 
 With `AccountManager`, a saved native key is tried by default after fresh account verification. `manager.prefer_native(false)` selects Web for subsequent opens without deleting the key. New managers default to native preference.
 
-Managed native startup first checks the daemon's authentication state. If it is
-not signed in, the SDK looks for an unambiguous matching device in the current
-account's Connect list and submits one paused transfer to activate it. A transfer
-response alone is not success: the daemon must confirm `logged_in`, followed by
-same-account device verification. Existing authenticated daemons skip this
-activation. A paused transfer can move the account away from its current receiver.
+Managed native startup first checks the daemon's authentication state. If it is not signed in, the SDK looks for an unambiguous matching device in the current account's Connect list and submits one paused transfer to activate it. A transfer response alone is not success: the daemon must confirm `logged_in`, followed by same-account device verification. Existing authenticated daemons skip this activation. A paused transfer can move the account away from its current receiver.
 
-A device absent from the account list cannot be authenticated by guessing a
-transfer target. **Pairing requires explicit opt-in** through `native_pairing(true)`.
-With that option enabled, failed activation can restart the daemon once in
-Soloist's pairing mode. The official Spotify app provisions the device, and the
-session is retained in the data directory. Ordinary restores do not enter pairing mode. The pairing attempt is made at most once per process, so an
-unpaired device reports `NativeAuthenticationRequired` instead of stalling every
-switch. A disconnected daemon is reported as `Disconnected`, and a timed-out
-discovery or transfer request as `NativeStartupTimeout`. Transfers are
-never automatically replayed. If Web fallback also fails, `NativeStartupFailed`
-retains both errors instead of hiding the native cause behind DRM/engine errors.
+A device absent from the account list cannot be authenticated by guessing a transfer target. **Pairing requires explicit opt-in** through `native_pairing(true)` on `SpotCoreBuilder` or `AccountManager`; the default is false. With that option enabled, failed activation can restart the daemon once in Soloist's pairing mode. The official Spotify app provisions the device, and the session is retained in the data directory. Ordinary restores do not enter pairing mode. The pairing attempt is made at most once per process, so an unpaired device reports `NativeAuthenticationRequired` instead of stalling every switch. A disconnected daemon is reported as `Disconnected`, and a timed-out discovery or transfer request as `NativeStartupTimeout`. Transfers are never automatically replayed. If Web fallback also fails, `NativeStartupFailed` retains both errors instead of hiding the native cause behind DRM/engine errors.
 
 The separately cached executable is `spotcore-native` (`.exe` on Windows), with install metadata beside it. Managed downloads refresh after 85 days from recorded download time, independently of SDK releases. This is a freshness policy, not proof of a vendor build's expiry. Stop managed daemons before updating. The Soloist API key is passed as an argument because its interface requires it, so it can be visible in process listings.
 
@@ -128,6 +118,10 @@ Receiver arguments are omitted. This table summarizes behavior and selected retu
 
 | Method and inputs | Behavior / result |
 | --- | --- |
+| `wait_ready(timeout)` | Wait for the owned receiver without activation or transfer |
+| `play_spoken(uri, position, device)` | Select an episode/chapter and restore a nonzero position after confirming Native selection |
+| `play_audiobook(value, chapter, position, device)` | Apply account policy and validate chapter membership/access; a resume offset requires an explicit chapter |
+| `quality_report()` | Distinguish Web stream reporting from a native device preference |
 | `play(uri)` | Load/start a Spotify URI. `Command::Load` |
 | `pause()`, `resume()`, `toggle()`, `stop()` | Transport controls. Web Stop maps to pause |
 | `next()`, `previous()` | Receiver decides skip eligibility |
@@ -138,10 +132,10 @@ Receiver arguments are omitted. This table summarizes behavior and selected retu
 | `set_repeat(mode)` | `RepeatMode::{Off, Context, Track}` |
 | `set_speed(speed)` | Finite 0.5–3.5 input, with receiver restrictions |
 | `play_context(uri, track, index, position)` | Optional track URI, zero-based index and `Duration` start. Use one track-selection policy |
-| `add_to_queue(uris)` | `Vec<String>`. HTTP accepts one URI per command |
+| `add_to_queue(uris)` | `Vec<String>`. One or more URIs through queue services; partial completion is possible |
 | `insert_into_queue(uris, before)` | `Vec<String>`, optional `QueueItem`. None inserts at manual-queue head |
 | `reorder_queue(items, before, after)` | `Vec<QueueItem>`, exactly one reference row |
-| `skip_to_queue(item)` | Exact `QueueItem`. Browser-assisted only |
+| `skip_to_queue(item)` | Exact visible `QueueItem`, checked through HTTP Connect |
 | `remove_from_queue(items)` / `clear_queue()` | Exact rows / clear operation. Preserve context and restrictions where supported |
 | `queue()` | `Result<Queue, Error>` |
 | `set_quality(quality)` | `AudioQuality` → `Result<AppliedQuality, Error>` |
@@ -157,32 +151,19 @@ Receiver arguments are omitted. This table summarizes behavior and selected retu
 | `execute_on(device, command)` / `play_on(device, uri)` | Explicit receiver routing. See [devices](devices.md) |
 | `shutdown()` | Consume and stop owned session resources |
 
-Native snapshots read duration from Soloist's decorated playback metadata and
-preserve context and volume. Once startup verifies a receiver in the account,
-the session binds its Connect device ID for subsequent activation and snapshots.
-Initial registration still requires an unambiguous device name in the account.
+Native repeat uses the web-assisted Connect control so context and track repeat flags change together. Native audio remains on Soloist; changing repeat does not require browser playback.
 
-Applications can set `application_name("My Music App")` on `AccountManager`,
-`SpotCoreBuilder` or `HostLauncher` to brand managed host processes and login
-windows. Rebuild the launcher and selected host to apply that branding. Executable
-filenames and profile storage identifiers remain stable.
+Native snapshots read duration from Soloist's decorated playback metadata and preserve context and volume. Once startup verifies a receiver in the account, the session binds its Connect device ID for subsequent activation and snapshots. Initial registration still requires an unambiguous device name in the account.
 
-HTTP queue reads enrich sparse Connect entries with catalog metadata, preserving
-row URIs, UIDs and order. Home sections use the same metadata cache for incomplete
-cards. The per-API cache holds at most 256 items for ten minutes. Failed lookups
-back off for 30 seconds. Each refresh starts at most 24 unique metadata reads,
-with six concurrent reads and a three-second overall enrichment budget. The queue
-itself remains available when individual metadata reads fail.
+Applications can set `application_name("My Music App")` on `AccountManager`, `SpotCoreBuilder` or `HostLauncher` to brand managed host processes and login windows. Rebuild the launcher and selected host to apply that branding. Executable filenames and profile storage identifiers remain stable.
 
-`native_pairing(true)` on `SpotCoreBuilder`, or `AccountManager::native_pairing(true)`,
-opts an explicit setup into an official-app pairing attempt after an unauthenticated
-native start. It defaults to false so restores do not enter an interactive pairing
-wait or reset stored pairing state. This does not implement automatic cookie pairing.
+## Queue metadata and recovery
 
-`devices().queue_snapshot()` returns queue state and context identity without
-waiting for catalog enrichment. `devices().queue()` retains optional enrichment.
-Native `queue_changed`, `context_changed` and `options_changed` events invalidate
-queue state. Context and option changes also request a fresh playback snapshot.
+`api.queues().snapshot()` returns authoritative order, occurrence identities, receiver/Jam scope and permissions without waiting for metadata enrichment. `devices().queue_snapshot()` returns queue data and fills only metadata already cached. `devices().queue()` additionally performs a best-effort recovery batch.
+
+The shared per-API metadata cache holds at most 256 items for ten minutes. Negative cache entries expire after 30 seconds. A best-effort hydration pass requests at most four unique items with four concurrent reads and an eight-second timeout per item. Individual metadata failures preserve the queue rows. For complete enrichment, follow the explicit [metadata recovery](service-recovery.md) continuation API rather than repeatedly reading the queue.
+
+`devices().queue_snapshot()` returns queue state and context identity without waiting for catalog enrichment. `devices().queue()` retains optional enrichment. Native `queue_changed`, `context_changed` and `options_changed` events invalidate queue state. Context and option changes also request a fresh playback snapshot.
 
 ## Local device readiness
 
@@ -190,16 +171,8 @@ queue state. Context and option changes also request a fresh playback snapshot.
 
 `activate_local()` transfers to that owned player with playback disabled and waits for activation. It does not start a track. Call it for an explicit local Play or when startup has confirmed no other device is active. Clients should retry read-only discovery while registration is pending, keep playback controls disabled on failure, and avoid equating authenticated services with an activated playback device.
 
-Web player state reads return immediately with cached shuffle capabilities.
-Context-specific shuffle availability refreshes in the background and publishes
-a new snapshot when ready. It never delays core playback state.
+Web player state reads return immediately with cached shuffle capabilities. Context-specific shuffle availability refreshes in the background and publishes a new snapshot when ready. It never delays core playback state.
 
-`Api::local_playback_state()` reads the local Web receiver independently of a
-mutable playback command. HTTP-only sessions return Unsupported. Use
-`devices().playback_state()` for the account's active Connect receiver instead.
+`Api::local_playback_state()` reads the local Web receiver independently of a mutable playback command. HTTP-only sessions return Unsupported. Use `devices().playback_state()` for the account's active Connect receiver instead.
 
-`SpotCore::play_items(context, uris, position)` starts an ordered list on this
-SDK's local receiver. `devices().play_items(target, context, uris, position)`
-targets an explicit Connect receiver. Items are sent in one inline context page,
-not as Add to queue commands, so another collection replaces this context's tail
-while genuine manual queue entries remain intact. Lists accept 1 to 1000 items.
+`SpotCore::play_items(context, uris, position)` starts an ordered list on this SDK's local receiver. `devices().play_items(target, context, uris, position)` targets an explicit Connect receiver. Items are sent in one inline context page, not as Add to queue commands, so another collection replaces this context's tail while genuine manual queue entries remain intact. Lists accept 1 to 1000 items.

@@ -34,4 +34,5 @@ Receiver arguments are omitted. `Value` means `serde_json::Value`. The return co
 | `saved_episodes()` | `Result<Value, Error>` | Read saved-episode collection data. |
 | `set_saved(value: &str, saved: bool)` | `Result<Value, Error>` | Add/remove an episode from the saved-episode collection. |
 | `show_info(value: &str)` | `Result<ShowInfo, Error>` | Read typed detailed metadata. |
+| `audiobook_info(value: &str)` | `Result<ShowInfo, Error>` | Apply account availability policy and return typed book metadata. Does not grant title playback access. |
 | `episode_info(value: &str)` | `Result<EpisodeInfo, Error>` | Read typed detailed metadata. |

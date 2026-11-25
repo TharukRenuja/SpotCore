@@ -66,6 +66,7 @@ Receiver arguments are omitted. `Value` means `serde_json::Value`. The return co
 | `remove(values: &[String])` | `Result<Value, Error>` | Remove supplied media URIs from the library. |
 | `items(filter: Option<&str>, order: &str, folder: Option<&str>, paging: Paging)` | `Result<Page<MediaItem>, Error>` | Page normalized library media. Filter/order use Spotify names. |
 | `items_detailed(filter: Option<&str>, order: &str, folder: Option<&str>, text_filter: &str, paging: Paging)` | `Result<Page<LibraryItem>, Error>` | Page library rows with metadata and text filtering. |
+| `all_playlists()` | `Result<Vec<MediaItem>, Error>` | Traverse folders and pages with deduplication and pagination guards. |
 | `liked_tracks(paging: Paging)` | `Result<Page<MediaItem>, Error>` | Page Liked Songs. |
 | `pin(value: &str, pinned: bool)` | `Result<Value, Error>` | Set or clear a library pin. |
 | `folders()` | `Result<Vec<LibraryEntry>, Error>` | Read rootlist entries with nested folder children. |

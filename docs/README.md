@@ -8,7 +8,7 @@ New here? Start with the [quickstart](quickstart.md). Already building? Pick the
 | [Installation](installation.md) | Source setup, runtime requirements and known limitations |
 | [Configuration](configuration.md) | Cargo features, builder defaults and environment variables |
 | [Account availability](availability.md) | Country, tier, account flags and explicit restriction reasons |
-| [Typed services and recovery](service-recovery.md) | Progressive metadata recovery and migration from client workarounds |
+| [Typed services and recovery](service-recovery.md) | Normalized services, progressive metadata recovery and raw-response compatibility |
 | [Models and pagination](models.md) | Identifiers, typed results, raw data and continuation |
 | [Events and lifetime](events.md) | Event handling, capabilities and shutdown |
 | [Podcasts and audiobooks](podcasts.md) | Spoken-audio catalog, saved episodes and restrictions |
