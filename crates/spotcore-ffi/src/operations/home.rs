@@ -91,6 +91,16 @@ pub(super) async fn call(
             let p: Args = parse(arguments)?;
             encode(sdk.home().new_releases(p.paging).await?)
         }
+        "recover_media" => {
+            #[derive(serde::Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Args {
+                uris: Vec<String>,
+                paging: Paging,
+            }
+            let p: Args = parse(arguments)?;
+            encode(sdk.home().recover_media(&p.uris, p.paging).await?)
+        }
         "section" => {
             #[derive(serde::Deserialize)]
             #[serde(deny_unknown_fields)]

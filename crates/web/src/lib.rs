@@ -1,4 +1,8 @@
 //! Myspoti-derived Spotify browser API and playback adapter (GPL-3.0-only).
+mod chapters;
+pub use chapters::{ChapterMarker, ChapterMarkers, ChapterSource};
+mod availability;
+pub use availability::{AUDIOBOOK_ESTABLISHED_MARKETS, AccountAvailability, Availability};
 mod api;
 mod assets;
 mod bridge;
@@ -10,8 +14,10 @@ mod domains;
 pub mod host;
 mod http;
 mod jam;
-pub use jam::{JamSession, ListenOn};
+pub use jam::{JamMember, JamPermissions, JamSession, ListenOn};
 mod mapping;
+mod recovery;
+pub use recovery::{MediaResolution, RecoveryPage};
 mod page;
 pub use page::WebPlayerOptions;
 mod player;

@@ -3,7 +3,7 @@ use super::{empty, encode, parse};
 use crate::BindingError;
 use serde_json::Value;
 use spotcore::Paging;
-use spotcore::web::PlaylistAccess;
+use spotcore::web::{PlaylistAccess, PlaylistSelection};
 
 pub(super) async fn call(
     sdk: &mut spotcore::SpotCore,
@@ -58,6 +58,20 @@ pub(super) async fn call(
             }
             let p: Args = parse(arguments)?;
             encode(sdk.playlists().create(&p.name, p.folder.as_deref()).await?)
+        }
+        "create_playlist" => {
+            #[derive(serde::Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Args {
+                name: String,
+                folder: Option<String>,
+            }
+            let p: Args = parse(arguments)?;
+            encode(
+                sdk.playlists()
+                    .create_playlist(&p.name, p.folder.as_deref())
+                    .await?,
+            )
         }
         "delete" => {
             #[derive(serde::Deserialize)]
@@ -199,6 +213,16 @@ pub(super) async fn call(
             }
             let p: Args = parse(arguments)?;
             encode(sdk.playlists().remove_member(&p.value, &p.username).await?)
+        }
+        "remove_rows" => {
+            #[derive(serde::Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Args {
+                value: String,
+                selected: Vec<PlaylistSelection>,
+            }
+            let p: Args = parse(arguments)?;
+            encode(sdk.playlists().remove_rows(&p.value, p.selected).await?)
         }
         "remove_tracks" => {
             #[derive(serde::Deserialize)]

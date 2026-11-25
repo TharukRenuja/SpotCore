@@ -152,6 +152,15 @@ pub(super) async fn call(
             let p: Args = parse(arguments)?;
             encode(sdk.catalog().similar_albums(&p.value, p.limit).await?)
         }
+        "statistics" => {
+            #[derive(serde::Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Args {
+                value: String,
+            }
+            let p: Args = parse(arguments)?;
+            encode(sdk.catalog().statistics(&p.value).await?)
+        }
         "track" => {
             #[derive(serde::Deserialize)]
             #[serde(deny_unknown_fields)]

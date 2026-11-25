@@ -26,6 +26,7 @@ async fn search(spotify: &SpotCore) -> Result<(), Error> {
 | `NativeStartupFailed` | Inspect both native and Web fallback errors |
 | `InvalidInput` | Correct the request. Do not retry unchanged |
 | `Unsupported` | Disable the action for this mode/device |
+| `FeatureUnavailable` | Inspect the typed restriction reason: account denial, unverified/unavailable market, Premium, title lock, engine support or unknown availability |
 | `AccountRestricted` | Explain account/backend eligibility |
 | `DrmUnavailable` | Check Widevine and AAC using the engine guide |
 | `NoCompatibleEngine` | Inspect candidate failures and setup requirements |

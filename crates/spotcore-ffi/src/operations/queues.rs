@@ -90,6 +90,16 @@ pub(super) async fn call(
             let p: Args = parse(arguments)?;
             encode(sdk.queues().replace_manual(&p.uris).await?)
         }
+        "skip_to" => {
+            #[derive(serde::Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Args {
+                snapshot: QueueSnapshot,
+                item: &QueueItem,
+            }
+            let p: Args = parse(arguments)?;
+            encode(sdk.queues().skip_to(&p.snapshot, p.item).await?)
+        }
         "snapshot" => {
             empty(arguments)?;
             encode(sdk.queues().snapshot().await?)

@@ -99,7 +99,7 @@ def outputs():
         helpers = ['encode'] + (['empty'] if 'empty(arguments)' in body else []) + (['parse'] if 'parse(arguments)' in body else [])
         imports = 'use super::{' + ', '.join(sorted(helpers)) + '};\nuse crate::BindingError;\nuse serde_json::Value;\n'
         for prefix, names in [('spotcore', ['AudioQuality', 'Command', 'Paging', 'QueueItem', 'RepeatMode', 'ShuffleMode', 'ListenOn', 'QueueSnapshot']),
-                              ('spotcore::web', ['Device', 'PlaylistAccess', 'SearchKind', 'TimeRange'])]:
+                              ('spotcore::web', ['Device', 'PlaylistAccess', 'PlaylistSelection', 'SearchKind', 'TimeRange'])]:
             used = [name for name in names if re.search(r'\b' + name + r'\b', body)]
             if used:
                 imports += 'use ' + prefix + '::{' + ', '.join(used) + '};\n'

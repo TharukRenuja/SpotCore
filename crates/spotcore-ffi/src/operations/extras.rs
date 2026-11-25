@@ -18,6 +18,15 @@ pub(super) async fn call(
             let p: Args = parse(arguments)?;
             encode(sdk.extras().canvas(&p.value).await?)
         }
+        "chapter_markers" => {
+            #[derive(serde::Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Args {
+                value: String,
+            }
+            let p: Args = parse(arguments)?;
+            encode(sdk.extras().chapter_markers(&p.value).await?)
+        }
         "credits" => {
             #[derive(serde::Deserialize)]
             #[serde(deny_unknown_fields)]
@@ -54,6 +63,15 @@ pub(super) async fn call(
             let p: Args = parse(arguments)?;
             encode(sdk.extras().lyrics(&p.value).await?)
         }
+        "lyrics_info" => {
+            #[derive(serde::Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Args {
+                value: String,
+            }
+            let p: Args = parse(arguments)?;
+            encode(sdk.extras().lyrics_info(&p.value).await?)
+        }
         "prerelease" => {
             #[derive(serde::Deserialize)]
             #[serde(deny_unknown_fields)]
@@ -62,6 +80,15 @@ pub(super) async fn call(
             }
             let p: Args = parse(arguments)?;
             encode(sdk.extras().prerelease(&p.value).await?)
+        }
+        "prerelease_info" => {
+            #[derive(serde::Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Args {
+                value: String,
+            }
+            let p: Args = parse(arguments)?;
+            encode(sdk.extras().prerelease_info(&p.value).await?)
         }
         "radio" => {
             #[derive(serde::Deserialize)]
@@ -90,6 +117,15 @@ pub(super) async fn call(
             }
             let p: Args = parse(arguments)?;
             encode(sdk.extras().radio_uri(&p.seed).await?)
+        }
+        "resolve_share_url" => {
+            #[derive(serde::Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Args {
+                value: String,
+            }
+            let p: Args = parse(arguments)?;
+            encode(sdk.extras().resolve_share_url(&p.value).await?)
         }
         "set_artist_banned" => {
             #[derive(serde::Deserialize)]

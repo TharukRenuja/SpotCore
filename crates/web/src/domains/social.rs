@@ -7,7 +7,7 @@ use spotcore_core::{AudioQuality, Paging};
 
 fn sparse_media(item: &spotcore_core::MediaItem) -> bool {
     item.name.is_empty()
-        || item.images.is_empty()
+        || !item.images.iter().any(|image| !image.url.trim().is_empty())
         || (matches!(
             item.kind,
             spotcore_core::MediaKind::Track | spotcore_core::MediaKind::Episode
@@ -15,62 +15,45 @@ fn sparse_media(item: &spotcore_core::MediaItem) -> bool {
 }
 
 fn fill_media_metadata(item: &mut spotcore_core::MediaItem, full: spotcore_core::MediaItem) {
-    if item.name.is_empty() {
-        item.name = full.name;
-    }
-    if item.duration_ms.is_none_or(|duration| duration == 0) {
-        item.duration_ms = full.duration_ms;
-    }
-    if item.images.is_empty() {
-        item.images = full.images;
-    }
-    if let (Some(row), Some(metadata)) = (item.raw.as_object_mut(), full.raw.as_object()) {
-        for (key, value) in metadata {
-            if key != "uri" && key != "uid" {
-                row.insert(key.clone(), value.clone());
-            }
-        }
-    }
+    crate::recovery::fill(item, &full);
 }
 
-pub(crate) async fn hydrate_media(api: &Api, items: Vec<&mut spotcore_core::MediaItem>) {
-    use futures_util::{StreamExt, stream};
-    let mut missing = Vec::new();
-    let mut seen = std::collections::HashSet::new();
-    for item in &items {
-        if sparse_media(item)
-            && api.should_lookup_media(&item.uri)
-            && (item.uri.starts_with("spotify:track:")
-                || item.uri.starts_with("spotify:episode:")
-                || item.uri.starts_with("spotify:playlist:")
-                || item.uri.starts_with("spotify:album:"))
-            && seen.insert(item.uri.clone())
-        {
-            missing.push(item.uri.clone());
+pub(crate) async fn hydrate_media(api: &Api, mut items: Vec<&mut spotcore_core::MediaItem>) {
+    // Legacy best-effort reads stay bounded. Explicit RecoveryPage callers can continue all pages.
+    for item in &mut items {
+        if let Some(full) = api.cached_media(&item.uri) {
+            fill_media_metadata(item, full);
         }
     }
-    // Bound work per refresh; later refreshes fill the rest from the session cache.
-    let mut reads = stream::iter(missing.into_iter().take(24).map(|uri| async move {
-        let result = tokio::time::timeout(std::time::Duration::from_secs(3), async {
-            if uri.starts_with("spotify:episode:") {
-                api.podcasts().episode(&uri).await
-            } else if uri.starts_with("spotify:playlist:") {
-                api.playlists().playlist(&uri).await
-            } else if uri.starts_with("spotify:album:") {
-                api.catalog().album(&uri).await
-            } else {
-                api.catalog().track(&uri).await
+    let missing: Vec<_> = items
+        .iter()
+        .filter(|item| sparse_media(item) && api.should_lookup_media(&item.uri))
+        .map(|item| item.uri.clone())
+        .collect();
+    if !missing.is_empty() {
+        if let Ok(page) = api
+            .recover_media(
+                &missing,
+                spotcore_core::Paging {
+                    offset: 0,
+                    limit: 4,
+                },
+            )
+            .await
+        {
+            for resolution in page.items {
+                if matches!(
+                    resolution.error,
+                    Some(Error::Http {
+                        status: 404 | 410,
+                        ..
+                    })
+                ) {
+                    api.cache_media(resolution.uri, None);
+                }
             }
-        })
-        .await;
-        api.cache_media(uri, result.ok().and_then(Result::ok));
-    }))
-    .buffer_unordered(6);
-    let _ = tokio::time::timeout(std::time::Duration::from_secs(3), async {
-        while reads.next().await.is_some() {}
-    })
-    .await;
-    drop(reads);
+        }
+    }
     for item in items {
         if sparse_media(item)
             && let Some(full) = api.cached_media(&item.uri)
@@ -699,6 +682,46 @@ impl Devices<'_> {
 
 pub struct Jam<'a>(pub(crate) &'a Api);
 impl Jam<'_> {
+    /// Explicit creation only. This is never called from refresh, invitations or restoration.
+    pub async fn start_session(&self) -> Result<JamSession, Error> {
+        self.0
+            .users()
+            .availability()
+            .await?
+            .jam_hosting
+            .require("jam_hosting")?;
+        if let Some(session) = self.state().await? {
+            if !session.is_owner {
+                return Err(Error::InvalidInput(
+                    "leave the current Jam before starting another",
+                ));
+            }
+            return Ok(session);
+        }
+        let created = self.start().await?;
+        JamSession::parse(created)?
+            .ok_or_else(|| Error::Backend("Spotify did not confirm the created Jam".into()))
+    }
+    pub async fn invitation_url(&self, id: &str) -> Result<String, Error> {
+        let value = self.invite_link(id).await?;
+        value
+            .get("shareableUrl")
+            .and_then(Value::as_str)
+            .filter(|value| {
+                url::Url::parse(value).is_ok_and(|url| {
+                    url.scheme() == "https"
+                        && matches!(
+                            url.host_str(),
+                            Some("open.spotify.com" | "spotify.link" | "spotify.app.link")
+                        )
+                        && url.username().is_empty()
+                        && url.password().is_none()
+                        && url.port().is_none()
+                })
+            })
+            .map(str::to_owned)
+            .ok_or_else(|| Error::Backend("Spotify returned no valid Jam invitation".into()))
+    }
     pub async fn availability(&self) -> Result<Value, Error> {
         service(self.0, "SocialConnectAPI", "getEnabled", vec![]).await
     }

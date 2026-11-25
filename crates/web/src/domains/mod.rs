@@ -6,6 +6,7 @@ mod details;
 mod library;
 pub(crate) mod queue;
 mod social;
+mod typed;
 use crate::Api;
 pub use browsing::*;
 pub use content::*;
@@ -15,6 +16,7 @@ pub use queue::{QueuePermissions, QueueScope, QueueSnapshot, Queues};
 use serde_json::Value;
 pub use social::*;
 use spotcore_core::Error;
+pub use typed::*;
 
 pub(crate) fn uri(value: &str) -> Result<(), Error> {
     if !value.starts_with("spotify:")

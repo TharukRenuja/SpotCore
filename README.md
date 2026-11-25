@@ -141,3 +141,6 @@ Build the Rust API reference with `cargo doc -p spotcore --all-features --no-dep
 ## Special thanks
 
 Special thanks to **kota-zo and contributors** behind [**Orpheon**](https://github.com/kota-zo/Orpheon) (formerly **Myspoti**)! SpotCore builds on their browser bridge and Spotify API mappings. You’ll find the credits and license details in [third-party notices](THIRD-PARTY-NOTICES.md). Also an **honourable mention to [librespot](https://github.com/librespot-org/librespot)** and its contributors.
+### Typed account policy and service recovery
+
+The development branch adds [account availability](docs/availability.md) and [shared metadata recovery](docs/service-recovery.md), plus typed service helpers that replace application-specific Spotify parsers. Existing low-level APIs remain available. This work is unreleased; it does not change the published version or downstream dependencies.

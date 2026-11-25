@@ -27,6 +27,15 @@ pub(super) async fn call(
             let p: Args = parse(arguments)?;
             encode(sdk.jam().end_session(&p.id).await?)
         }
+        "invitation_url" => {
+            #[derive(serde::Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Args {
+                id: String,
+            }
+            let p: Args = parse(arguments)?;
+            encode(sdk.jam().invitation_url(&p.id).await?)
+        }
         "invite_link" => {
             #[derive(serde::Deserialize)]
             #[serde(deny_unknown_fields)]
@@ -140,6 +149,10 @@ pub(super) async fn call(
         "start" => {
             empty(arguments)?;
             encode(sdk.jam().start().await?)
+        }
+        "start_session" => {
+            empty(arguments)?;
+            encode(sdk.jam().start_session().await?)
         }
         "state" => {
             empty(arguments)?;

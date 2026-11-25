@@ -154,6 +154,13 @@
     "result": "Value"
   },
   {
+    "operation": "catalog.statistics",
+    "arguments": {
+      "value": "String"
+    },
+    "result": "CatalogStatistics"
+  },
+  {
     "operation": "catalog.track",
     "arguments": {
       "value": "String"
@@ -263,6 +270,13 @@
     "result": "Value"
   },
   {
+    "operation": "extras.chapter_markers",
+    "arguments": {
+      "value": "String"
+    },
+    "result": "crate::ChapterMarkers"
+  },
+  {
     "operation": "extras.credits",
     "arguments": {
       "value": "String"
@@ -291,11 +305,25 @@
     "result": "Value"
   },
   {
+    "operation": "extras.lyrics_info",
+    "arguments": {
+      "value": "String"
+    },
+    "result": "Option<SpotifyLyrics>"
+  },
+  {
     "operation": "extras.prerelease",
     "arguments": {
       "value": "String"
     },
     "result": "Value"
+  },
+  {
+    "operation": "extras.prerelease_info",
+    "arguments": {
+      "value": "String"
+    },
+    "result": "PrereleaseInfo"
   },
   {
     "operation": "extras.radio",
@@ -318,6 +346,13 @@
       "seed": "String"
     },
     "result": "Option<String>"
+  },
+  {
+    "operation": "extras.resolve_share_url",
+    "arguments": {
+      "value": "String"
+    },
+    "result": "String"
   },
   {
     "operation": "extras.set_artist_banned",
@@ -395,6 +430,14 @@
     "result": "Page<MediaItem>"
   },
   {
+    "operation": "home.recover_media",
+    "arguments": {
+      "uris": "Vec<String>",
+      "paging": "Paging"
+    },
+    "result": "RecoveryPage"
+  },
+  {
     "operation": "home.section",
     "arguments": {
       "value": "String",
@@ -434,6 +477,13 @@
       "id": "String"
     },
     "result": "()"
+  },
+  {
+    "operation": "jam.invitation_url",
+    "arguments": {
+      "id": "String"
+    },
+    "result": "String"
   },
   {
     "operation": "jam.invite_link",
@@ -530,6 +580,11 @@
     "result": "Value"
   },
   {
+    "operation": "jam.start_session",
+    "arguments": {},
+    "result": "JamSession"
+  },
+  {
     "operation": "jam.state",
     "arguments": {},
     "result": "Option<JamSession>"
@@ -540,6 +595,11 @@
       "values": "Vec<String>"
     },
     "result": "Value"
+  },
+  {
+    "operation": "library.all_playlists",
+    "arguments": {},
+    "result": "Vec<MediaItem>"
   },
   {
     "operation": "library.contains",
@@ -757,6 +817,16 @@
     "result": "()"
   },
   {
+    "operation": "playback.play_audiobook",
+    "arguments": {
+      "value": "String",
+      "chapter": "Option<String>",
+      "position": "u64",
+      "device": "Option<String>"
+    },
+    "result": "()"
+  },
+  {
     "operation": "playback.play_context",
     "arguments": {
       "uri": "String",
@@ -784,6 +854,15 @@
     "result": "()"
   },
   {
+    "operation": "playback.play_spoken",
+    "arguments": {
+      "uri": "String",
+      "position": "u64",
+      "device": "Option<String>"
+    },
+    "result": "()"
+  },
+  {
     "operation": "playback.position_ms",
     "arguments": {},
     "result": "u64"
@@ -792,6 +871,11 @@
     "operation": "playback.previous",
     "arguments": {},
     "result": "()"
+  },
+  {
+    "operation": "playback.quality_report",
+    "arguments": {},
+    "result": "QualityReport"
   },
   {
     "operation": "playback.queue",
@@ -908,6 +992,13 @@
     "result": "f64"
   },
   {
+    "operation": "playback.wait_ready",
+    "arguments": {
+      "timeout": "u64"
+    },
+    "result": "crate::web::Device"
+  },
+  {
     "operation": "playlists.access",
     "arguments": {
       "value": "String"
@@ -944,6 +1035,14 @@
       "folder": "Option<String>"
     },
     "result": "Value"
+  },
+  {
+    "operation": "playlists.create_playlist",
+    "arguments": {
+      "name": "String",
+      "folder": "Option<String>"
+    },
+    "result": "String"
   },
   {
     "operation": "playlists.delete",
@@ -1048,6 +1147,14 @@
       "username": "String"
     },
     "result": "Value"
+  },
+  {
+    "operation": "playlists.remove_rows",
+    "arguments": {
+      "value": "String",
+      "selected": "Vec<PlaylistSelection>"
+    },
+    "result": "()"
   },
   {
     "operation": "playlists.remove_tracks",
@@ -1158,6 +1265,13 @@
       "value": "String"
     },
     "result": "Value"
+  },
+  {
+    "operation": "podcasts.audiobook_info",
+    "arguments": {
+      "value": "String"
+    },
+    "result": "ShowInfo"
   },
   {
     "operation": "podcasts.chapters",
@@ -1282,6 +1396,14 @@
     "result": "()"
   },
   {
+    "operation": "queues.skip_to",
+    "arguments": {
+      "snapshot": "QueueSnapshot",
+      "item": "&QueueItem"
+    },
+    "result": "()"
+  },
+  {
     "operation": "queues.snapshot",
     "arguments": {},
     "result": "QueueSnapshot"
@@ -1292,6 +1414,13 @@
       "paging": "Paging"
     },
     "result": "Value"
+  },
+  {
+    "operation": "recents.items",
+    "arguments": {
+      "paging": "Paging"
+    },
+    "result": "Page<MediaItem>"
   },
   {
     "operation": "search.all",
@@ -1344,6 +1473,16 @@
     "result": "Value"
   },
   {
+    "operation": "users.activity",
+    "arguments": {},
+    "result": "Vec<FriendActivity>"
+  },
+  {
+    "operation": "users.availability",
+    "arguments": {},
+    "result": "AccountAvailability"
+  },
+  {
     "operation": "users.follow",
     "arguments": {
       "values": "Vec<String>"
@@ -1358,11 +1497,25 @@
     "result": "Value"
   },
   {
+    "operation": "users.followers_info",
+    "arguments": {
+      "value": "String"
+    },
+    "result": "Vec<ProfileCard>"
+  },
+  {
     "operation": "users.following",
     "arguments": {
       "value": "String"
     },
     "result": "Value"
+  },
+  {
+    "operation": "users.following_info",
+    "arguments": {
+      "value": "String"
+    },
+    "result": "Vec<ProfileCard>"
   },
   {
     "operation": "users.friend_activity",
@@ -1399,6 +1552,21 @@
       "value": "String"
     },
     "result": "Value"
+  },
+  {
+    "operation": "users.profile_info",
+    "arguments": {
+      "value": "String"
+    },
+    "result": "UserProfileInfo"
+  },
+  {
+    "operation": "users.rankings",
+    "arguments": {
+      "range": "TimeRange",
+      "limit": "u32"
+    },
+    "result": "UserRankings"
   },
   {
     "operation": "users.set_blocked",

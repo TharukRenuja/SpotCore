@@ -19,6 +19,10 @@ pub(super) async fn call(
             let p: Args = parse(arguments)?;
             encode(sdk.library().add(&p.values).await?)
         }
+        "all_playlists" => {
+            empty(arguments)?;
+            encode(sdk.library().all_playlists().await?)
+        }
         "contains" => {
             #[derive(serde::Deserialize)]
             #[serde(deny_unknown_fields)]
