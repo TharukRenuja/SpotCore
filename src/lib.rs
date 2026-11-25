@@ -9,8 +9,8 @@ pub use spotcore_auth::{
 pub use spotcore_core::{
     AudioQuality, Backend, BackendFuture, Capabilities, Command, Creator, CursorPage,
     EngineFailure, Error, FeatureRestriction, Image, MediaItem, MediaKind, MediaMetadata, Page,
-    Paging, Paths, PlaybackEvent, PlaybackState, PlayerSnapshot, Queue, QueueItem, RepeatMode,
-    ShuffleMode,
+    Paging, Paths, PlaybackEvent, PlaybackState, PlayerSnapshot, QualityReport, QualitySource,
+    Queue, QueueItem, RepeatMode, ShuffleMode,
 };
 
 #[cfg(feature = "web")]
@@ -26,7 +26,7 @@ mod session;
 #[cfg(feature = "web")]
 mod spotify;
 #[cfg(feature = "web")]
-pub use session::{QualityReport, QualitySource, SessionBackend, SpotCore};
+pub use session::{SessionBackend, SpotCore};
 #[cfg(feature = "web")]
 pub use spotify::{AppliedQuality, SpotCoreBuilder, Spotify};
 #[cfg(feature = "web")]

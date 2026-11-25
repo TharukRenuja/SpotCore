@@ -371,3 +371,16 @@ mod metadata_tests {
         assert!(item.require_playable().is_ok());
     }
 }
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub enum QualitySource {
+    WebStream,
+    DevicePreference,
+}
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct QualityReport {
+    pub quality: Option<AudioQuality>,
+    pub source: QualitySource,
+    /// Device/account capability, not proof of a delivered lossless stream.
+    pub lossless_available: bool,
+}

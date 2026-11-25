@@ -1,23 +1,10 @@
 use crate::web::{Api, ManagedHost, WebBackend};
 use crate::{
     AppliedQuality, AudioQuality, Backend, BackendFuture, Capabilities, Client, Command, Error,
-    PlaybackEvent, PlaybackMode, PlayerSnapshot, Queue, QueueItem, RepeatMode, ShuffleMode,
-    SpotCoreBuilder, Spotify,
+    PlaybackEvent, PlaybackMode, PlayerSnapshot, QualityReport, QualitySource, Queue, QueueItem,
+    RepeatMode, ShuffleMode, SpotCoreBuilder, Spotify,
 };
 use std::time::Duration;
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub enum QualitySource {
-    WebStream,
-    DevicePreference,
-}
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct QualityReport {
-    pub quality: Option<AudioQuality>,
-    pub source: QualitySource,
-    /// Device/account capability, not proof of a delivered lossless stream.
-    pub lossless_available: bool,
-}
 
 /// A Web session with optional, separately installed Soloist playback.
 pub struct SpotCore {
@@ -128,7 +115,7 @@ impl SpotCore {
                     .raw
                     .pointer("/audiobookV2/data/uri")
                     .or_else(|| item.raw.pointer("/podcastV2/data/uri"))
-                    .and_then(serde_json::Value::as_str);
+                    .and_then(crate::web::Value::as_str);
                 if parent != Some(book.uri.as_str()) {
                     return Err(Error::InvalidInput(
                         "could not verify chapter membership in this audiobook",
