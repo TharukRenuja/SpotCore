@@ -12,14 +12,14 @@
 
 ## Add to your app
 
-**Requires Rust 1.89 or newer.** Cargo can build SpotCore directly from GitHub without a crates.io package. With the `v0.1.11` release tag published, add:
+**Requires Rust 1.89 or newer.** Cargo can build SpotCore directly from GitHub without a crates.io package. After the `v0.2.0` release tag is published, add:
 
 ```toml
 [dependencies]
-spotcore = { git = "https://github.com/TharukRenuja/SpotCore.git", tag = "v0.1.11" }
+spotcore = { git = "https://github.com/TharukRenuja/SpotCore.git", tag = "v0.2.0" }
 ```
 
-**Use a published tag or pin a full commit with `rev`, then commit your application's `Cargo.lock`.** Version `0.1.11` is the current source version; the version bump alone does not create a tag. Add `features = ["native"]` if your app needs Soloist support. See [installation](docs/installation.md) for a local source dependency and runtime setup.
+**Use a published tag or pin a full commit with `rev`, then commit your application's `Cargo.lock`.** Version `0.2.0` is the current source version; the version bump alone does not create a tag. Add `features = ["native"]` if your app needs Soloist support. See [installation](docs/installation.md) for a local source dependency and runtime setup.
 
 ## Start playing
 
