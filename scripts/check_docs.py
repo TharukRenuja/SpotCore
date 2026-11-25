@@ -25,7 +25,7 @@ def main():
     for name in filter(None, tracked):
         path = ROOT / name
         if path.exists():
-            errors.extend(missing_links(path, path.read_text()))
+            errors.extend(missing_links(path, path.read_text(encoding="utf-8")))
     if errors:
         raise SystemExit('\n'.join(errors))
     print('Repository-relative documentation links passed (external URLs and anchors not checked)')

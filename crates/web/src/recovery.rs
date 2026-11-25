@@ -138,43 +138,6 @@ pub(crate) fn fill(item: &mut MediaItem, full: &MediaItem) {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn recovery_cursor_is_stable_across_duplicate_cards() {
-        let input: Vec<_> = ["a", "b", "a", "c", "d", "e"]
-            .map(|id| format!("spotify:playlist:{id}"))
-            .into();
-        let unique = recovery_uris(&input).unwrap();
-        assert_eq!(unique.len(), 5);
-        assert_eq!(unique[4], "spotify:playlist:e");
-        assert!(recovery_uris(&["invalid".into()]).is_err());
-    }
-    #[test]
-    fn recovery_preserves_occurrence_and_collection_metadata() {
-        let mut row = MediaItem {
-            uri: "spotify:track:a".into(),
-            name: "".into(),
-            kind: spotcore_core::MediaKind::Track,
-            images: vec![],
-            duration_ms: None,
-            uid: Some("occurrence".into()),
-            raw: serde_json::json!({"addedBy":"alice","metadata":{"is_queued":true}}),
-        };
-        let mut full = row.clone();
-        full.uid = Some("other".into());
-        full.name = "Song".into();
-        full.raw = serde_json::json!({"addedBy":"bob","metadata":{},"artists":[{"name":"Artist"}]});
-        fill(&mut row, &full);
-        assert_eq!(row.uid.as_deref(), Some("occurrence"));
-        assert_eq!(row.raw["addedBy"], "alice");
-        assert_eq!(row.raw["metadata"]["is_queued"], true);
-        assert_eq!(row.name, "Song");
-        assert!(row.raw["artists"].is_array());
-    }
-}
-
 impl HomeFeed {
     /// Stable recovery paging includes every unique card, so filling a page never shifts later offsets.
     pub async fn recover_metadata(
@@ -239,5 +202,42 @@ fn seed_complete(api: &Api, shelves: &[Shelf]) {
         {
             api.cache_media(item.uri.clone(), Some(item.clone()));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn recovery_cursor_is_stable_across_duplicate_cards() {
+        let input: Vec<_> = ["a", "b", "a", "c", "d", "e"]
+            .map(|id| format!("spotify:playlist:{id}"))
+            .into();
+        let unique = recovery_uris(&input).unwrap();
+        assert_eq!(unique.len(), 5);
+        assert_eq!(unique[4], "spotify:playlist:e");
+        assert!(recovery_uris(&["invalid".into()]).is_err());
+    }
+    #[test]
+    fn recovery_preserves_occurrence_and_collection_metadata() {
+        let mut row = MediaItem {
+            uri: "spotify:track:a".into(),
+            name: "".into(),
+            kind: spotcore_core::MediaKind::Track,
+            images: vec![],
+            duration_ms: None,
+            uid: Some("occurrence".into()),
+            raw: serde_json::json!({"addedBy":"alice","metadata":{"is_queued":true}}),
+        };
+        let mut full = row.clone();
+        full.uid = Some("other".into());
+        full.name = "Song".into();
+        full.raw = serde_json::json!({"addedBy":"bob","metadata":{},"artists":[{"name":"Artist"}]});
+        fill(&mut row, &full);
+        assert_eq!(row.uid.as_deref(), Some("occurrence"));
+        assert_eq!(row.raw["addedBy"], "alice");
+        assert_eq!(row.raw["metadata"]["is_queued"], true);
+        assert_eq!(row.name, "Song");
+        assert!(row.raw["artists"].is_array());
     }
 }
