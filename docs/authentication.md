@@ -122,3 +122,11 @@ The app implements `CredentialStore` using its existing vault. The SDK supplies 
 For direct storage use, `AccountStore` exposes `new`, `with_credential_store`, `base_dir`, `account_path`, `load_metadata`, `save_profile`, `load_profile`, `delete_account`, `list_accounts`, `record_tier` and `resolve_session`. These are synchronous filesystem/vault operations returning I/O results. `resolve_session` returns an optional `ResolvedSession`. Profile helpers include `has_web`, `native_available`, `playback_mode` and `tier_is_stale(max_age_ms)`. AccountManager is preferable for async app workflows because it also owns account-session shutdown, identity checks and leases.
 
 Legacy plaintext profile migration preserves data if vault storage fails. The readable metadata file is not encrypted. Secrets are stored separately. A custom credential store determines its own security properties. Account-specific browser cookies can persist independently in the browser profile.
+
+## Add an account without switching playback
+
+`AccountManager::authenticate_account(cookie)` returns an owned, cancellable future. Pass `None` for managed Spotify login or `Some(cookie)` for cookie verification. Creating the future does not borrow the manager for its lifetime, so the current account can continue handling controls while authentication is polled on the SDK runtime.
+
+The operation uses an isolated temporary profile, verifies the account and exported renewable credentials, and saves the profile before allowing the login window to close. It preserves existing Native credentials/preferences for that identity and does not select the new account, start music or transfer playback. Existing `login(id)` and `switch_to(id)` keep their behavior.
+
+Dropping the future cancels pending login work. Temporary profile cleanup is scheduled on the runtime; an OS-profile cleanup failure or shutdown can leave an isolated directory under `pending-logins` for later removal. If cancellation happens during a credential-store write, saving may have completed: list saved accounts before retrying. Never ask users to close the Spotify window to signal successful authentication.
