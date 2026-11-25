@@ -1399,7 +1399,7 @@
     "operation": "queues.skip_to",
     "arguments": {
       "snapshot": "QueueSnapshot",
-      "item": "&QueueItem"
+      "item": "QueueItem"
     },
     "result": "()"
   },

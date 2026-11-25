@@ -257,7 +257,7 @@ Direct duration arguments (`position`, `amount`) are integer **milliseconds**. `
 | `queues.move_items` | `snapshot: QueueSnapshot, items: Vec<QueueItem>, before: Option<QueueItem>, after: Option<QueueItem>, manual: Option<bool>` | `()` |
 | `queues.remove` | `snapshot: QueueSnapshot, items: Vec<QueueItem>` | `()` |
 | `queues.replace_manual` | `uris: Vec<String>` | `()` |
-| `queues.skip_to` | `snapshot: QueueSnapshot, item: &QueueItem` | `()` |
+| `queues.skip_to` | `snapshot: QueueSnapshot, item: QueueItem` | `()` |
 | `queues.snapshot` | `{}` | `QueueSnapshot` |
 
 ## Recents

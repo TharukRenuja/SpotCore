@@ -58,12 +58,13 @@ def parse_params(text):
 def owned(kind):
     kind = kind.replace('spotcore_core::QueueItem', 'QueueItem')
     return {'&str': 'String', '&[String]': 'Vec<String>', 'Option<&str>': 'Option<String>',
-            'Option<&[u8]>': 'Option<Vec<u8>>', '&Device': 'Device', '&QueueSnapshot': 'QueueSnapshot', '&[QueueItem]': 'Vec<QueueItem>', 'impl Into<String>': 'String',
+            'Option<&[u8]>': 'Option<Vec<u8>>', '&Device': 'Device', '&QueueSnapshot': 'QueueSnapshot', '&QueueItem': 'QueueItem', '&[QueueItem]': 'Vec<QueueItem>', 'impl Into<String>': 'String',
             'Duration': 'u64', 'Option<Duration>': 'Option<u64>'}.get(kind, kind)
 
 
 def expression(name, kind):
-    if kind in ('&str', '&[String]', '&Device', '&QueueSnapshot', '&[QueueItem]'):
+    kind = kind.replace('spotcore_core::QueueItem', 'QueueItem')
+    if kind in ('&str', '&[String]', '&Device', '&QueueSnapshot', '&QueueItem', '&[QueueItem]'):
         return '&p.' + name
     if kind in ('Option<&str>', 'Option<&[u8]>'):
         return f'p.{name}.as_deref()'
@@ -79,6 +80,8 @@ def outputs():
     manifest = []
     for domain, name, params, asynchronous, response in methods():
         groups.setdefault(domain, [])
+        for _, kind in params:
+            assert '&' not in owned(kind), f'Unmapped borrowed operation argument: {domain}.{name}: {kind}'
         fields = '\n'.join(f'                {n}: {owned(k)},' for n, k in params)
         if params:
             parse = '#[derive(serde::Deserialize)]\n            #[serde(deny_unknown_fields)]\n            struct Args {\n' + fields + '\n            }\n            let p: Args = parse(arguments)?;'
