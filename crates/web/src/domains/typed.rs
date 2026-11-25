@@ -168,7 +168,7 @@ impl Recents<'_> {
     /// These are Spotify's grouped recent entities, not complete timestamped listening history.
     pub async fn items(&self, paging: Paging) -> Result<Page<MediaItem>, Error> {
         let body = self.entries(paging).await?;
-        crate::mapping::page(&body, "/data/recents", paging)
+        crate::mapping::recents(&body, paging)
     }
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]

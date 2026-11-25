@@ -73,6 +73,7 @@ pub(crate) fn item(row: &Value) -> Option<MediaItem> {
     };
     let mut images = Vec::new();
     for path in [
+        "/visualIdentityTrait/squareCoverImage/image/data/sources",
         "/images",
         "/coverArt/sources",
         "/visuals/avatarImage/sources",
@@ -87,10 +88,36 @@ pub(crate) fn item(row: &Value) -> Option<MediaItem> {
                 if let Some(url) = image["url"].as_str().filter(|url| !url.trim().is_empty()) {
                     images.push(Image {
                         url: artwork_url(url),
-                        width: image["width"].as_u64().and_then(|n| n.try_into().ok()),
-                        height: image["height"].as_u64().and_then(|n| n.try_into().ok()),
+                        width: image["width"]
+                            .as_u64()
+                            .or_else(|| image["maxWidth"].as_u64())
+                            .and_then(|n| n.try_into().ok()),
+                        height: image["height"]
+                            .as_u64()
+                            .or_else(|| image["maxHeight"].as_u64())
+                            .and_then(|n| n.try_into().ok()),
                     });
                 }
+            }
+        }
+    }
+    if images.is_empty() {
+        for image in value
+            .pointer("/visualIdentityTrait/squareCoverImage/originalInstances")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            if let Some(url) = image
+                .pointer("/flatFile/cdnUrl")
+                .and_then(Value::as_str)
+                .filter(|url| !url.trim().is_empty())
+            {
+                images.push(Image {
+                    url: artwork_url(url),
+                    width: None,
+                    height: None,
+                });
             }
         }
     }
@@ -106,10 +133,28 @@ pub(crate) fn item(row: &Value) -> Option<MediaItem> {
     }
     let mut raw = value.clone();
     // Collection fields live on the row, outside the track or episode payload.
-    for key in ["addedAt", "added_at", "addedBy", "added_by", "uid"] {
+    for key in [
+        "addedAt",
+        "added_at",
+        "addedBy",
+        "added_by",
+        "uid",
+        "formatListAttributes",
+    ] {
         if let Some(metadata) = row.get(key) {
             raw[key] = metadata.clone();
         }
+    }
+    if raw.get("artists").is_none()
+        && let Some(contributors) = value.pointer("/identityTrait/contributors/items")
+    {
+        raw["artists"] = contributors.clone();
+    }
+    if raw.get("albumOfTrack").is_none()
+        && let Some(parent) = value.pointer("/identityTrait/contentHierarchyParent")
+    {
+        raw["albumOfTrack"] =
+            serde_json::json!({"uri":parent["uri"],"name":parent.pointer("/identityTrait/name")});
     }
     Some(MediaItem {
         uri: uri.into(),
@@ -117,6 +162,7 @@ pub(crate) fn item(row: &Value) -> Option<MediaItem> {
             value,
             &[
                 "/name",
+                "/identityTrait/name",
                 "/title/transformedLabel",
                 "/title",
                 "/profile/name",
@@ -140,7 +186,16 @@ pub(crate) fn item(row: &Value) -> Option<MediaItem> {
             "/duration_ms",
         ]
         .iter()
-        .find_map(|p| value.pointer(p).and_then(Value::as_u64)),
+        .find_map(|p| value.pointer(p).and_then(Value::as_u64))
+        .or_else(|| {
+            let duration = value.pointer("/consumptionExperienceTrait/duration")?;
+            let seconds = duration["seconds"]
+                .as_u64()
+                .or_else(|| duration["seconds"].as_str()?.parse().ok())?;
+            seconds
+                .checked_mul(1000)?
+                .checked_add(duration["nanoSeconds"].as_u64().unwrap_or(0) / 1_000_000)
+        }),
         uid: text(row, &["/uid"])
             .or_else(|| text(value, &["/uid"]))
             .map(str::to_owned),
@@ -178,6 +233,28 @@ fn restricted_ancestor(value: &Value, pointer: &str) -> bool {
         }
     }
     false
+}
+
+/// The Recents list wraps its row page under lists, including activity/group attributes.
+pub(crate) fn recents(body: &Value, paging: Paging) -> Result<Page<MediaItem>, Error> {
+    let mut page = page(body, "/data/lists/0/items", paging)?;
+    if let Some(next) = body
+        .pointer("/data/lists/0/items/pagingInfo/nextOffset")
+        .filter(|value| !value.is_null())
+    {
+        let next = next
+            .as_u64()
+            .and_then(|n| u32::try_from(n).ok())
+            .filter(|next| *next > paging.offset)
+            .ok_or_else(|| Error::Backend("invalid Recents page offset".into()))?;
+        page.next_offset = Some(next);
+    } else if body
+        .pointer("/data/lists/0/items/pagingInfo/nextOffset")
+        .is_some()
+    {
+        page.next_offset = None;
+    }
+    Ok(page)
 }
 
 pub(crate) fn page(body: &Value, pointer: &str, paging: Paging) -> Result<Page<MediaItem>, Error> {
@@ -387,6 +464,46 @@ pub(crate) fn queue(value: &Value) -> Result<Queue, Error> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn recents_generic_traits_keep_artwork_activity_and_server_cursor() {
+        let body = serde_json::json!({"data":{"lists":[{"items":{"items":[{
+            "addedAt":{"year":2026,"month":11,"day":25},
+            "formatListAttributes":[{"key":"group_id_0","value":""}],
+            "entity":{"data":{"uri":"spotify:track:example","identityTrait":{"name":"Example","contributors":{"items":[{"name":"Artist","uri":"spotify:artist:artist"}]},"contentHierarchyParent":{"uri":"spotify:album:album","identityTrait":{"name":"Album"}}},
+            "visualIdentityTrait":{"squareCoverImage":{"image":{"data":{"sources":[{"url":"https://i.scdn.co/image/example","maxWidth":300,"maxHeight":300}]}}}},
+            "consumptionExperienceTrait":{"duration":{"seconds":"12","nanoSeconds":500000000}}}}
+        }],"totalCount":10,"pagingInfo":{"nextOffset":4}}}]}});
+        let page = super::recents(
+            &body,
+            spotcore_core::Paging {
+                offset: 0,
+                limit: 1,
+            },
+        )
+        .unwrap();
+        assert_eq!(page.next_offset, Some(4));
+        assert_eq!(page.items[0].name, "Example");
+        assert_eq!(page.items[0].images[0].width, Some(300));
+        assert_eq!(page.items[0].duration_ms, Some(12500));
+        assert_eq!(page.items[0].raw["artists"][0]["name"], "Artist");
+        assert_eq!(page.items[0].raw["albumOfTrack"]["name"], "Album");
+        assert_eq!(page.items[0].raw["addedAt"]["day"], 25);
+        assert_eq!(
+            page.items[0].raw["formatListAttributes"][0]["key"],
+            "group_id_0"
+        );
+        assert!(
+            super::recents(
+                &body,
+                spotcore_core::Paging {
+                    offset: 4,
+                    limit: 1
+                }
+            )
+            .is_err()
+        );
+    }
+
     use super::*;
     use serde_json::json;
 
