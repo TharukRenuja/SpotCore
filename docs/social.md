@@ -125,7 +125,7 @@ Receiver arguments are omitted. `Value` means `serde_json::Value`. The return co
 | `is_following(values: &[String])` | `Result<Value, Error>` | Read following status for user URIs. |
 | `history()` | `Result<Value, Error>` | Read recent listening contexts through the service API. |
 | `friend_activity()` | `Result<Value, Error>` | Read available friend-listening presence. |
-| `set_private_session(enabled: bool)` | `Result<Value, Error>` | Check support before requesting private-session state. |
+| `set_private_session(enabled: bool)` | `Result<Value, Error>` | Request a change through a compatible browser service. Unsupported in HTTP-only sessions; does not control Soloist’s native scrobble service. |
 | `set_blocked(value: &str, blocked: bool)` | `Result<Value, Error>` | Set or clear a user block. |
 | `is_blocked(value: &str)` | `Result<bool, Error>` | Check a user block. |
 

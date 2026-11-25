@@ -110,6 +110,14 @@ The separately cached executable is `spotcore-native` (`.exe` on Windows), with 
 
 `set_quality()` returns an applied preference, not measured stream fidelity. Web clamps Lossless/HiRes to VeryHigh. Native quality depends on device/account eligibility. A setting alone does not prove delivered bitrate. `audio_info()` reports Web `bitrate`, `mime` and `level`. Native audio diagnostics return `Unsupported` rather than reporting an inactive Web stream.
 
+### Native control boundaries
+
+Spotify’s desktop application uses its local Core preferences for streaming quality and EQ, and its scrobble service for Private Session. These are separate from ordinary Connect playback commands. The presence of a preference key or quality enum does not establish that an external receiver exposes that control.
+
+The current Soloist command interface used by this SDK exposes playback, volume, shuffle, repeat and queue operations. It does not expose the native preference or scrobble services needed to implement Spotify’s six-band EQ or Private Session. SpotCore does not provide a native EQ API. `users().set_private_session()` requires a compatible browser service; it is not a native receiver control. Do not represent a browser-side change as a confirmed native Private Session.
+
+Native quality methods use Spotify’s device-settings HTTP service, not Soloist preference commands. A successful settings write and readback confirms a server-side preference only. The API currently has no complete verified list of selectable native quality levels. Device lossless flags do not establish every permitted quality, and account tier or country alone is insufficient. Applications should not advertise native levels as available solely from the `AudioQuality` enum. Changes must target the owned receiver and remain unconfirmed if the endpoint cannot read them back. There is no native delivered-stream bitrate/codec report in the current interface.
+
 Call `shutdown().await?` when finished. It stops owned engines. Attached external browsers are left running.
 
 ## Facade method reference
