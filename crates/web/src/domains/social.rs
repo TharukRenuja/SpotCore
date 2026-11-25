@@ -30,8 +30,8 @@ pub(crate) async fn hydrate_media(api: &Api, mut items: Vec<&mut spotcore_core::
         .filter(|item| sparse_media(item) && api.should_lookup_media(&item.uri))
         .map(|item| item.uri.clone())
         .collect();
-    if !missing.is_empty() {
-        if let Ok(page) = api
+    if !missing.is_empty()
+        && let Ok(page) = api
             .recover_media(
                 &missing,
                 spotcore_core::Paging {
@@ -40,17 +40,16 @@ pub(crate) async fn hydrate_media(api: &Api, mut items: Vec<&mut spotcore_core::
                 },
             )
             .await
-        {
-            for resolution in page.items {
-                if matches!(
-                    resolution.error,
-                    Some(Error::Http {
-                        status: 404 | 410,
-                        ..
-                    })
-                ) {
-                    api.cache_media(resolution.uri, None);
-                }
+    {
+        for resolution in page.items {
+            if matches!(
+                resolution.error,
+                Some(Error::Http {
+                    status: 404 | 410,
+                    ..
+                })
+            ) {
+                api.cache_media(resolution.uri, None);
             }
         }
     }

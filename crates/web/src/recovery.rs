@@ -129,12 +129,10 @@ pub(crate) fn fill(item: &mut MediaItem, full: &MediaItem) {
             if !matches!(
                 key.as_str(),
                 "uri" | "uid" | "addedAt" | "added_at" | "addedBy" | "added_by" | "metadata"
-            ) {
-                if row.get(key).is_none_or(|existing| {
-                    existing.is_null() || existing.as_array().is_some_and(Vec::is_empty)
-                }) {
-                    row.insert(key.clone(), value.clone());
-                }
+            ) && row.get(key).is_none_or(|existing| {
+                existing.is_null() || existing.as_array().is_some_and(Vec::is_empty)
+            }) {
+                row.insert(key.clone(), value.clone());
             }
         }
     }
