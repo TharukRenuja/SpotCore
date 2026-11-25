@@ -1262,11 +1262,20 @@ mod tests {
             .remove("token");
         sdk.set_speed(1.25).await.unwrap();
         sdk.set_shuffle_mode(ShuffleMode::Smart).await.unwrap();
+        for mode in [RepeatMode::Context, RepeatMode::Track, RepeatMode::Off] {
+            sdk.set_repeat(mode).await.unwrap();
+        }
         let calls = browser.calls.lock().unwrap();
         assert!(!calls.iter().any(|(name, _)| name == "queue.clear"));
         for method in ["player.setSpeed", "player.setShuffleMode"] {
             assert!(calls.iter().any(|(name, _)| name == method));
         }
+        let repeats: Vec<_> = calls
+            .iter()
+            .filter(|(method, _)| method == "player.setRepeat")
+            .map(|(_, args)| args["mode"].clone())
+            .collect();
+        assert_eq!(repeats, vec![json!(1), json!(2), json!(0)]);
         assert!(commands.try_recv().is_err());
         server.abort();
     }

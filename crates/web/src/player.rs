@@ -242,6 +242,7 @@ impl WebBackend {
                 | Command::SkipToQueue(_)
                 | Command::SetSpeed(_)
                 | Command::SetShuffleMode(_)
+                | Command::SetRepeat(_)
         ) {
             return Err(Error::Unsupported);
         }

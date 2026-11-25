@@ -156,6 +156,11 @@ fn primary_categories(body: &Value) -> Result<Vec<BrowseCategory>, Error> {
         ) else {
             continue;
         };
+        let Some(name) = text(card, &["/title/transformedLabel", "/title/text", "/title"])
+            .filter(|name| !name.trim().is_empty())
+        else {
+            continue;
+        };
         let images = card
             .pointer("/artwork/sources")
             .and_then(Value::as_array)
@@ -171,7 +176,7 @@ fn primary_categories(body: &Value) -> Result<Vec<BrowseCategory>, Error> {
             .collect();
         out.push(BrowseCategory {
             uri,
-            name: text(card, &["/title/transformedLabel", "/title/text"]).unwrap_or_default(),
+            name,
             images,
             background_color: text(card, &["/backgroundColor/hex"]),
             raw: row.clone(),
@@ -244,6 +249,23 @@ mod tests {
         );
         assert!(home_feed(json!({"data":{"home":null}}), 2).is_err());
     }
+    #[test]
+    fn browse_primary_cards_accept_string_titles_and_skip_blank_names() {
+        let body = json!({"data":{"browseStart":{"sections":{"items":[{"sectionItems":{"items":[
+            {"uri":"spotify:genre:music","content":{"data":{"cardRepresentation":{"title":"Music"}}}},
+            {"uri":"spotify:genre:empty","content":{"data":{"cardRepresentation":{"title":" "}}}},
+            {"uri":"spotify:genre:podcasts","content":{"data":{"cardRepresentation":{"title":{"transformedLabel":null,"text":"Podcasts"}}}}}
+        ]}}]}}}});
+        let cards = categories(&body).unwrap();
+        assert_eq!(
+            cards
+                .iter()
+                .map(|card| card.name.as_str())
+                .collect::<Vec<_>>(),
+            ["Music", "Podcasts"]
+        );
+    }
+
     #[test]
     fn browse_cards_keep_title_artwork_and_color() {
         let body = json!({"data":{"browseStart":{"sections":{"items":[{"sectionItems":{"items":[
@@ -651,11 +673,9 @@ fn fallback_categories(body: &serde_json::Value) -> Vec<BrowseCategory> {
             .or_else(|| (node["__typename"] == "BrowseCard").then_some(node))
             && let Some(uri) = uri
                 .filter(|uri| matches!(uri.split(':').nth(1), Some("genre" | "page" | "section")))
-            && let Some(name) = card
-                .pointer("/title/transformedLabel")
-                .or_else(|| card.pointer("/title/text"))
-                .or_else(|| card.get("title"))
-                .and_then(serde_json::Value::as_str)
+            && let Some(name) = ["/title/transformedLabel", "/title/text", "/title"]
+                .iter()
+                .find_map(|path| card.pointer(path).and_then(serde_json::Value::as_str))
                 .filter(|name| !name.trim().is_empty())
             && !found.iter().any(|item| item.uri == uri)
         {
