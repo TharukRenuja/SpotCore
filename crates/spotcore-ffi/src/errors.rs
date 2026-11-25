@@ -33,6 +33,15 @@ impl From<spotcore::Error> for BindingError {
             Error::Unsupported => "unsupported",
             Error::InvalidInput(_) => "invalid_input",
             Error::AccountRestricted(_) => "account_restricted",
+            Error::FeatureUnavailable { reason, .. } => match reason {
+                spotcore::FeatureRestriction::UnavailableInMarket { .. } => "unavailable_in_market",
+                spotcore::FeatureRestriction::UnverifiedMarket { .. } => "unverified_market",
+                spotcore::FeatureRestriction::RequiresPremium => "requires_premium",
+                spotcore::FeatureRestriction::TitleLocked => "title_locked",
+                spotcore::FeatureRestriction::UnsupportedByEngine => "unsupported_by_engine",
+                spotcore::FeatureRestriction::AccountDenied => "account_denied",
+                _ => "availability_unknown",
+            },
             Error::Http { .. } => "http",
             _ => "backend",
         };
@@ -48,6 +57,25 @@ impl From<spotcore::Error> for BindingError {
 mod tests {
     use super::*;
 
+    #[test]
+    fn feature_policy_errors_are_not_transport_errors() {
+        let error = BindingError::from(spotcore::Error::FeatureUnavailable {
+            feature: "audiobooks".into(),
+            reason: spotcore::FeatureRestriction::UnverifiedMarket {
+                country: "LK".into(),
+            },
+        });
+        assert_eq!(error.code, "unverified_market");
+        assert!(error.message.contains("LK"));
+        assert_eq!(
+            BindingError::from(spotcore::Error::Http {
+                status: 502,
+                retry_after: None
+            })
+            .code,
+            "http"
+        );
+    }
     #[test]
     fn native_authentication_and_fallback_have_distinct_binding_codes() {
         assert_eq!(

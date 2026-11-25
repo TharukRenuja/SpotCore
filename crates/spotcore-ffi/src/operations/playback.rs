@@ -109,6 +109,26 @@ pub(super) async fn call(
             let p: Args = parse(arguments)?;
             encode(sdk.play(p.uri).await?)
         }
+        "play_audiobook" => {
+            #[derive(serde::Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Args {
+                value: String,
+                chapter: Option<String>,
+                position: u64,
+                device: Option<String>,
+            }
+            let p: Args = parse(arguments)?;
+            encode(
+                sdk.play_audiobook(
+                    &p.value,
+                    p.chapter.as_deref(),
+                    std::time::Duration::from_millis(p.position),
+                    p.device.as_deref(),
+                )
+                .await?,
+            )
+        }
         "play_context" => {
             #[derive(serde::Deserialize)]
             #[serde(deny_unknown_fields)]
@@ -157,6 +177,24 @@ pub(super) async fn call(
             let p: Args = parse(arguments)?;
             encode(sdk.play_on(p.device, p.uri).await?)
         }
+        "play_spoken" => {
+            #[derive(serde::Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Args {
+                uri: String,
+                position: u64,
+                device: Option<String>,
+            }
+            let p: Args = parse(arguments)?;
+            encode(
+                sdk.play_spoken(
+                    &p.uri,
+                    std::time::Duration::from_millis(p.position),
+                    p.device.as_deref(),
+                )
+                .await?,
+            )
+        }
         "position_ms" => {
             empty(arguments)?;
             encode(sdk.position_ms())
@@ -164,6 +202,10 @@ pub(super) async fn call(
         "previous" => {
             empty(arguments)?;
             encode(sdk.previous().await?)
+        }
+        "quality_report" => {
+            empty(arguments)?;
+            encode(sdk.quality_report().await?)
         }
         "queue" => {
             empty(arguments)?;
@@ -302,6 +344,18 @@ pub(super) async fn call(
         "volume" => {
             empty(arguments)?;
             encode(sdk.volume().await?)
+        }
+        "wait_ready" => {
+            #[derive(serde::Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Args {
+                timeout: u64,
+            }
+            let p: Args = parse(arguments)?;
+            encode(
+                sdk.wait_ready(std::time::Duration::from_millis(p.timeout))
+                    .await?,
+            )
         }
         _ => Err(super::unknown()),
     }

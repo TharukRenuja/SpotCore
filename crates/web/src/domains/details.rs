@@ -255,7 +255,15 @@ pub(crate) fn artist_info(value: Value) -> Result<ArtistInfo, Error> {
     })
 }
 pub(crate) fn show(value: Value) -> Result<ShowInfo, Error> {
-    let (uri, name) = identity(&value, "show")?;
+    let kind = if value["uri"]
+        .as_str()
+        .is_some_and(|uri| uri.starts_with("spotify:audiobook:"))
+    {
+        "audiobook"
+    } else {
+        "show"
+    };
+    let (uri, name) = identity(&value, kind)?;
     Ok(ShowInfo {
         uri,
         name,

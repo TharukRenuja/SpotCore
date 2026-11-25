@@ -10,6 +10,14 @@ pub(super) async fn call(
     arguments: Value,
 ) -> Result<Value, BindingError> {
     match method {
+        "activity" => {
+            empty(arguments)?;
+            encode(sdk.users().activity().await?)
+        }
+        "availability" => {
+            empty(arguments)?;
+            encode(sdk.users().availability().await?)
+        }
         "follow" => {
             #[derive(serde::Deserialize)]
             #[serde(deny_unknown_fields)]
@@ -28,6 +36,15 @@ pub(super) async fn call(
             let p: Args = parse(arguments)?;
             encode(sdk.users().followers(&p.value).await?)
         }
+        "followers_info" => {
+            #[derive(serde::Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Args {
+                value: String,
+            }
+            let p: Args = parse(arguments)?;
+            encode(sdk.users().followers_info(&p.value).await?)
+        }
         "following" => {
             #[derive(serde::Deserialize)]
             #[serde(deny_unknown_fields)]
@@ -36,6 +53,15 @@ pub(super) async fn call(
             }
             let p: Args = parse(arguments)?;
             encode(sdk.users().following(&p.value).await?)
+        }
+        "following_info" => {
+            #[derive(serde::Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Args {
+                value: String,
+            }
+            let p: Args = parse(arguments)?;
+            encode(sdk.users().following_info(&p.value).await?)
         }
         "friend_activity" => {
             empty(arguments)?;
@@ -75,6 +101,25 @@ pub(super) async fn call(
             }
             let p: Args = parse(arguments)?;
             encode(sdk.users().profile(&p.value).await?)
+        }
+        "profile_info" => {
+            #[derive(serde::Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Args {
+                value: String,
+            }
+            let p: Args = parse(arguments)?;
+            encode(sdk.users().profile_info(&p.value).await?)
+        }
+        "rankings" => {
+            #[derive(serde::Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Args {
+                range: TimeRange,
+                limit: u32,
+            }
+            let p: Args = parse(arguments)?;
+            encode(sdk.users().rankings(p.range, p.limit).await?)
         }
         "set_blocked" => {
             #[derive(serde::Deserialize)]

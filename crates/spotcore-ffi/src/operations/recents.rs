@@ -19,6 +19,15 @@ pub(super) async fn call(
             let p: Args = parse(arguments)?;
             encode(sdk.recents().entries(p.paging).await?)
         }
+        "items" => {
+            #[derive(serde::Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Args {
+                paging: Paging,
+            }
+            let p: Args = parse(arguments)?;
+            encode(sdk.recents().items(p.paging).await?)
+        }
         _ => Err(super::unknown()),
     }
 }

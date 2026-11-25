@@ -437,3 +437,57 @@ mod tests {
         );
     }
 }
+
+impl QueueSnapshot {
+    pub fn item_at(&self, index: usize, expected_uri: &str) -> Result<QueueItem, Error> {
+        let item = self
+            .queue
+            .queued
+            .iter()
+            .chain(&self.queue.next_up)
+            .nth(index)
+            .filter(|item| item.uri == expected_uri)
+            .ok_or(Error::InvalidInput(
+                "queue changed; refresh before selecting an occurrence",
+            ))?;
+        identity(item).ok_or(Error::InvalidInput("queue row has no occurrence identity"))
+    }
+}
+impl Queues<'_> {
+    /// Select an exact occurrence from a scoped read, without reconstructing the queue.
+    pub async fn skip_to(&self, snapshot: &QueueSnapshot, item: &QueueItem) -> Result<(), Error> {
+        self.write(
+            snapshot,
+            "queue.skipTo",
+            json!({"uri":item.uri,"uid":item.uid}),
+        )
+        .await
+    }
+}
+
+#[cfg(test)]
+mod selection_tests {
+    use super::*;
+    #[test]
+    fn selected_duplicate_uses_its_occurrence_not_the_song_uri() {
+        let first = mapping::item(&json!({"uri":"spotify:track:a","uid":"first"})).unwrap();
+        let second = mapping::item(&json!({"uri":"spotify:track:a","uid":"second"})).unwrap();
+        let snapshot = QueueSnapshot {
+            origin: "sdk".into(),
+            scope: None,
+            permissions: QueuePermissions::default(),
+            queue: Queue {
+                context_uri: None,
+                current: None,
+                queued: vec![first, second],
+                next_up: vec![],
+            },
+        };
+        assert_eq!(
+            snapshot.item_at(1, "spotify:track:a").unwrap().uid,
+            "second"
+        );
+        assert!(snapshot.item_at(1, "spotify:track:other").is_err());
+        assert!(snapshot.item_at(2, "spotify:track:a").is_err());
+    }
+}

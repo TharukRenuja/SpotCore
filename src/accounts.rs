@@ -94,6 +94,71 @@ impl AccountManager {
         self
     }
 
+    /// Authenticate and save an account without switching or disturbing current playback.
+    /// Drop the future to cancel. The managed login window closes only after verified storage.
+    pub fn authenticate_account(
+        &self,
+        cookie: Option<String>,
+    ) -> impl std::future::Future<Output = Result<AccountMetadata, Error>> + use<> {
+        let root = self.paths.root().to_owned();
+        let store = self.store.clone();
+        let application_name = self.application_name.clone();
+        let engine = self.engine;
+        async move {
+            let pending = blocking(move || {
+                let parent = root.join("pending-logins");
+                reject_symlink(&parent).map_err(std::io::Error::other)?;
+                Paths::new(&parent)
+                    .prepare()
+                    .map_err(std::io::Error::other)?;
+                static SERIAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                let serial = SERIAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_nanos();
+                let path = parent.join(format!("{}-{now}-{serial}", std::process::id()));
+                std::fs::create_dir(&path)?;
+                let cleanup = PendingLoginCleanup(path);
+                Paths::new(&cleanup.0)
+                    .prepare()
+                    .map_err(std::io::Error::other)?;
+                Ok(cleanup)
+            })
+            .await?;
+            let _cleanup = pending;
+            let pending = _cleanup.0.clone();
+            let save = async |api: crate::Api| {
+                let account = api.users().me().await?;
+                let credentials = api.web_credentials().await?;
+                let verified =
+                    crate::Api::from_credentials(credentials.clone(), &Paths::new(&pending))?;
+                if verified.users().me().await?.username != account.username {
+                    return Err(Error::InvalidInput(
+                        "saved login belongs to another Spotify account",
+                    ));
+                }
+                let store = store.clone();
+                blocking(move || {
+                    store.save_web_login(&account.username, account.name, account.tier, credentials)
+                })
+                .await
+            };
+            match cookie {
+                Some(cookie) => save(crate::Api::from_cookie(cookie, &Paths::new(&pending))?).await,
+                None => {
+                    crate::SpotCore::builder()
+                        .application_name(&application_name)
+                        .engine(engine)
+                        .data_dir(&pending)
+                        .profile_dir(pending.join("profile"))
+                        .login_with(save)
+                        .await
+                }
+            }
+        }
+    }
+
     /// Lists readable metadata without opening the credential store.
     pub async fn list(&self) -> Result<Vec<AccountMetadata>, Error> {
         let store = self.store.clone();
@@ -453,6 +518,25 @@ fn storage_error(error: std::io::Error) -> Error {
     Error::Backend(format!("account storage: {error}"))
 }
 
+struct PendingLoginCleanup(std::path::PathBuf);
+impl Drop for PendingLoginCleanup {
+    fn drop(&mut self) {
+        let path = self.0.clone();
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            runtime.spawn(async move {
+                // Do not remove the store marker if OS-profile cleanup failed.
+                if crate::web::HostLauncher::forget_system_profile(&path, &path.join("profile"))
+                    .await
+                    .is_ok()
+                {
+                    let _ =
+                        tokio::task::spawn_blocking(move || std::fs::remove_dir_all(path)).await;
+                }
+            });
+        }
+    }
+}
+
 async fn blocking<T: Send + 'static>(
     operation: impl FnOnce() -> std::io::Result<T> + Send + 'static,
 ) -> Result<T, Error> {
@@ -465,6 +549,16 @@ async fn blocking<T: Send + 'static>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn isolated_authentication_future_does_not_borrow_the_manager() {
+        let paths = Paths::new(std::env::temp_dir().join("spotcore-detached-login-construction"));
+        let manager = AccountManager::new(paths).unwrap();
+        let authentication = manager.authenticate_account(None);
+        drop(manager);
+        // Dropping before the first poll must not open a window or write an account.
+        drop(authentication);
+    }
 
     struct MissingVault;
     impl crate::CredentialStore for MissingVault {

@@ -141,9 +141,49 @@ pub struct EngineFailure {
     pub cause: Box<Error>,
 }
 
+/// Stable reasons for feature restrictions; transport errors remain separate.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum FeatureRestriction {
+    UnavailableInMarket { country: String },
+    UnverifiedMarket { country: String },
+    AccountDenied,
+    RequiresPremium,
+    TitleLocked,
+    UnsupportedByEngine,
+    AvailabilityUnknown,
+}
+
+impl fmt::Display for FeatureRestriction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnavailableInMarket { country } => {
+                write!(f, "unavailable in account country {country}")
+            }
+            Self::UnverifiedMarket { country } => write!(
+                f,
+                "support for account country {country} has not been verified"
+            ),
+            Self::AccountDenied => {
+                f.write_str("Spotify has not enabled this feature for the account")
+            }
+            Self::RequiresPremium => f.write_str("Spotify Premium is required"),
+            Self::TitleLocked => f.write_str("this title is locked or unavailable for the account"),
+            Self::UnsupportedByEngine => {
+                f.write_str("the selected playback engine does not support this operation")
+            }
+            Self::AvailabilityUnknown => f.write_str("availability could not be verified"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[non_exhaustive]
 pub enum Error {
+    FeatureUnavailable {
+        feature: String,
+        reason: FeatureRestriction,
+    },
     NoCompatibleEngine {
         attempts: Vec<EngineFailure>,
         requirements: Vec<String>,
@@ -177,6 +217,7 @@ impl fmt::Display for Error {
                 "no compatible browser engine ({} candidates rejected); inspect attempts and requirements",
                 attempts.len()
             ),
+            Self::FeatureUnavailable { feature, reason } => write!(f, "{feature}: {reason}"),
             Self::InvalidInput(message) => f.write_str(message),
             Self::AccountRestricted(message) => f.write_str(message),
             Self::DrmUnavailable(message) => {

@@ -46,6 +46,89 @@ impl JamSession {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct JamMember {
+    pub id: String,
+    pub username: String,
+    pub name: Option<String>,
+    pub image: Option<String>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct JamPermissions {
+    pub control: bool,
+    pub volume: Option<bool>,
+    pub remove_members: bool,
+}
+impl JamSession {
+    pub fn members(&self) -> Vec<JamMember> {
+        self.raw
+            .get("session_members")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|member| {
+                let username = member
+                    .get("username")
+                    .or_else(|| member.get("id"))?
+                    .as_str()?
+                    .strip_prefix("spotify:user:")
+                    .unwrap_or(
+                        member
+                            .get("username")
+                            .or_else(|| member.get("id"))?
+                            .as_str()?,
+                    )
+                    .to_owned();
+                Some(JamMember {
+                    id: member["id"].as_str().unwrap_or(&username).into(),
+                    username,
+                    name: member
+                        .get("display_name")
+                        .or_else(|| member.get("displayName"))
+                        .and_then(Value::as_str)
+                        .map(str::to_owned),
+                    image: member
+                        .get("large_image_url")
+                        .or_else(|| member.get("image_url"))
+                        .or_else(|| member.get("imageUrl"))
+                        .and_then(Value::as_str)
+                        .map(crate::mapping::artwork_url),
+                })
+            })
+            .collect()
+    }
+    pub fn permissions(&self) -> JamPermissions {
+        let volume = self
+            .raw
+            .get("participantVolumeControl")
+            .or_else(|| self.raw.get("participant_volume_control"));
+        let volume = volume.and_then(|value| {
+            value.as_bool().or_else(|| match value.as_str()? {
+                "ENABLED" => Some(true),
+                "DISABLED" => Some(false),
+                _ => None,
+            })
+        });
+        let local = self.raw["listen_on_device"] == true || self.raw["listenOnDevice"] == true;
+        JamPermissions {
+            control: local || self.can_control,
+            volume: if self.is_owner || local {
+                Some(true)
+            } else {
+                volume
+            },
+            remove_members: self.is_owner,
+        }
+    }
+    pub fn join_token(&self) -> Option<&str> {
+        self.raw
+            .get("join_session_token")
+            .or_else(|| self.raw.get("joinSessionToken"))
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct State {
     joined: Option<Joined>,
@@ -422,5 +505,19 @@ mod tests {
         assert!(!s.can_control);
         assert_eq!(s.host_device.as_deref(), Some("host"));
         assert!(JamSession::parse(json!({"active":true})).is_err());
+    }
+}
+
+#[cfg(test)]
+mod effective_permission_tests {
+    use super::*;
+    #[test]
+    fn guest_host_controls_and_local_controls_are_distinct() {
+        let mut session = JamSession::parse(json!({"sessionId":"jam","isSessionOwner":false,"active":true,"queueOnlyMode":true,"participantVolumeControl":"DISABLED"})).unwrap().unwrap();
+        assert!(!session.permissions().control);
+        assert_eq!(session.permissions().volume, Some(false));
+        session.raw["listen_on_device"] = json!(true);
+        assert!(session.permissions().control);
+        assert_eq!(session.permissions().volume, Some(true));
     }
 }

@@ -19,6 +19,15 @@ pub(super) async fn call(
             let p: Args = parse(arguments)?;
             encode(sdk.podcasts().audiobook(&p.value).await?)
         }
+        "audiobook_info" => {
+            #[derive(serde::Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Args {
+                value: String,
+            }
+            let p: Args = parse(arguments)?;
+            encode(sdk.podcasts().audiobook_info(&p.value).await?)
+        }
         "chapters" => {
             #[derive(serde::Deserialize)]
             #[serde(deny_unknown_fields)]

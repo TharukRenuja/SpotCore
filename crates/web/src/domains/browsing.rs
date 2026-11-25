@@ -133,7 +133,7 @@ fn home_feed(body: Value, item_limit: u32) -> Result<HomeFeed, Error> {
     })
 }
 
-fn categories(body: &Value) -> Result<Vec<BrowseCategory>, Error> {
+fn primary_categories(body: &Value) -> Result<Vec<BrowseCategory>, Error> {
     let sections = body
         .pointer("/data/browseStart/sections/items")
         .and_then(Value::as_array)
@@ -620,5 +620,109 @@ mod discovery_tests {
             Some("spotify:playlist:p")
         );
         assert!(radio_uri(&json!({})).is_err());
+    }
+}
+
+fn categories(body: &Value) -> Result<Vec<BrowseCategory>, Error> {
+    match primary_categories(body) {
+        Ok(cards) if !cards.is_empty() => Ok(cards),
+        primary => {
+            let cards = fallback_categories(body);
+            if cards.is_empty() { primary } else { Ok(cards) }
+        }
+    }
+}
+fn fallback_categories(body: &serde_json::Value) -> Vec<BrowseCategory> {
+    fn visit(
+        node: &serde_json::Value,
+        inherited: Option<&str>,
+        depth: usize,
+        found: &mut Vec<BrowseCategory>,
+    ) {
+        if depth > 12 {
+            return;
+        }
+        let uri = node
+            .get("uri")
+            .and_then(serde_json::Value::as_str)
+            .or(inherited);
+        if let Some(card) = node
+            .get("cardRepresentation")
+            .or_else(|| (node["__typename"] == "BrowseCard").then_some(node))
+            && let Some(uri) = uri
+                .filter(|uri| matches!(uri.split(':').nth(1), Some("genre" | "page" | "section")))
+            && let Some(name) = card
+                .pointer("/title/transformedLabel")
+                .or_else(|| card.pointer("/title/text"))
+                .or_else(|| card.get("title"))
+                .and_then(serde_json::Value::as_str)
+                .filter(|name| !name.trim().is_empty())
+            && !found.iter().any(|item| item.uri == uri)
+        {
+            found.push(BrowseCategory {
+                uri: uri.to_owned(),
+                name: name.to_owned(),
+                images: card
+                    .pointer("/artwork/sources")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|image| {
+                        Some(Image {
+                            url: crate::mapping::artwork_url(image.get("url")?.as_str()?.trim()),
+                            width: image["width"]
+                                .as_u64()
+                                .and_then(|value| value.try_into().ok()),
+                            height: image["height"]
+                                .as_u64()
+                                .and_then(|value| value.try_into().ok()),
+                        })
+                    })
+                    .filter(|image| !image.url.is_empty())
+                    .collect(),
+                background_color: card
+                    .pointer("/backgroundColor/hex")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_owned),
+                raw: node.clone(),
+            });
+        }
+        match node {
+            serde_json::Value::Object(fields) => {
+                for (key, child) in fields {
+                    let inherited =
+                        if matches!(key.as_str(), "content" | "data" | "item" | "itemV2") {
+                            uri
+                        } else {
+                            None
+                        };
+                    visit(child, inherited, depth + 1, found);
+                }
+            }
+            serde_json::Value::Array(items) => {
+                for child in items {
+                    visit(child, uri, depth + 1, found);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut found = Vec::new();
+    if let Some(data) = body.get("data") {
+        visit(data, None, 0, &mut found);
+    }
+    found
+}
+
+#[cfg(test)]
+mod alternate_browse_tests {
+    use super::*;
+    #[test]
+    fn wrapped_browse_cards_use_the_shared_parser() {
+        let body = serde_json::json!({"data":{"browseStart":{"sections":{"items":[{"sectionItems":{"items":[{"uri":"spotify:genre:pop","content":{"data":{"cardRepresentation":{"title":{"transformedLabel":"Pop"},"artwork":{"sources":[{"url":"https://example.org/pop"}]}}}}}]}}]}}}});
+        let cards = categories(&body).unwrap();
+        assert_eq!(cards.len(), 1);
+        assert_eq!(cards[0].name, "Pop");
+        assert_eq!(cards[0].images[0].url, "https://example.org/pop");
     }
 }

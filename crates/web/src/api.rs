@@ -64,6 +64,7 @@ struct Inner {
     cookie: Option<crate::cookie::CookieSession>,
     operations: RwLock<Operations>,
     media_cache: RwLock<BTreeMap<String, CachedMedia>>,
+    media_reads: tokio::sync::Mutex<()>,
     schema: Value,
     http: Http,
     /// The device this account joined a Jam as. Spotify's session service
@@ -182,6 +183,7 @@ impl Api {
                 cookie: None,
                 operations: RwLock::new(ops),
                 media_cache: RwLock::new(BTreeMap::new()),
+                media_reads: tokio::sync::Mutex::new(()),
                 schema: serde_json::from_str(OPERATION_SCHEMA_JSON)
                     .map_err(|_| Error::Backend("invalid bundled operation schema".into()))?,
                 http: Http::new()?,
@@ -201,6 +203,9 @@ impl Api {
             .flatten()
     }
 
+    pub(crate) fn media_reads(&self) -> &tokio::sync::Mutex<()> {
+        &self.inner.media_reads
+    }
     pub(crate) fn should_lookup_media(&self, uri: &str) -> bool {
         self.inner
             .media_cache

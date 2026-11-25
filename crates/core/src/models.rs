@@ -223,3 +223,164 @@ mod tests {
         assert_eq!(AudioQuality::from_level_name("PETREL"), None);
     }
 }
+
+/// Normalized creators and access flags shared by catalog, queue and playback cards.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Creator {
+    pub uri: Option<String>,
+    pub name: String,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MediaMetadata {
+    pub artists: Vec<Creator>,
+    pub authors: Vec<Creator>,
+    pub narrators: Vec<Creator>,
+    pub audiobook: bool,
+    pub advertisement: bool,
+    pub playable: Option<bool>,
+    pub explicit: bool,
+    pub queued_by: Option<String>,
+}
+fn creators(raw: &Value, paths: &[&str]) -> Vec<Creator> {
+    let mut result = Vec::new();
+    for person in paths
+        .iter()
+        .filter_map(|path| raw.pointer(path)?.as_array())
+        .flatten()
+    {
+        let person = person
+            .get("entity")
+            .or_else(|| person.get("data"))
+            .unwrap_or(person);
+        let name = person
+            .get("name")
+            .or_else(|| person.pointer("/profile/name"))
+            .or_else(|| person.pointer("/decorations/identity/name"))
+            .and_then(Value::as_str)
+            .filter(|name| !name.trim().is_empty());
+        if let Some(name) = name {
+            let creator = Creator {
+                uri: person["uri"].as_str().map(str::to_owned),
+                name: name.into(),
+            };
+            if !result.contains(&creator) {
+                result.push(creator);
+            }
+        }
+    }
+    result
+}
+impl MediaItem {
+    pub fn metadata(&self) -> MediaMetadata {
+        let truthy = |value: &Value| value == true || value == "true";
+        MediaMetadata {
+            artists: creators(
+                &self.raw,
+                &[
+                    "/firstArtist/items",
+                    "/otherArtists/items",
+                    "/artists/items",
+                    "/artists",
+                    "/decorations/creators",
+                ],
+            ),
+            authors: creators(
+                &self.raw,
+                &[
+                    "/authorsV2/items",
+                    "/authors/items",
+                    "/authors",
+                    "/authorsV2",
+                ],
+            ),
+            narrators: creators(
+                &self.raw,
+                &[
+                    "/narratorsV2/items",
+                    "/narrators/items",
+                    "/narrators",
+                    "/narratorsV2",
+                ],
+            ),
+            audiobook: self.uri.starts_with("spotify:audiobook:")
+                || self.raw["__typename"] == "Audiobook"
+                || truthy(&self.raw["isAudiobook"]),
+            advertisement: self.kind == MediaKind::Ad
+                || self.uri.starts_with("spotify:ad:")
+                || self.raw["provider"] == "ad"
+                || truthy(&self.raw["metadata"]["is_advertisement"])
+                || self.raw["metadata"]["ad_id"].is_string(),
+            playable: self
+                .raw
+                .pointer("/playability/playable")
+                .and_then(Value::as_bool)
+                .or_else(|| self.raw.get("isPlayable").and_then(Value::as_bool)),
+            explicit: truthy(&self.raw["explicit"])
+                || self.raw["contentRating"]["label"] == "EXPLICIT",
+            queued_by: self
+                .raw
+                .pointer("/metadata/queued_by")
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+                .map(str::to_owned),
+        }
+    }
+    pub fn require_playable(&self) -> Result<(), crate::Error> {
+        if self.metadata().playable == Some(false) || self.raw["__typename"] == "RestrictedContent"
+        {
+            return Err(crate::Error::FeatureUnavailable {
+                feature: "title_playback".into(),
+                reason: crate::FeatureRestriction::TitleLocked,
+            });
+        }
+        Ok(())
+    }
+}
+impl PlayerSnapshot {
+    /// Playback speed, not elapsed-time interpolation. Missing speed stays unknown.
+    pub fn playback_speed(&self) -> Option<f64> {
+        ["/speed", "/position/speed", "/playback_speed"]
+            .iter()
+            .find_map(|path| self.raw.pointer(path)?.as_f64())
+            .filter(|speed| speed.is_finite() && (0.5..=3.5).contains(speed))
+    }
+}
+
+#[cfg(test)]
+mod metadata_tests {
+    use super::*;
+    #[test]
+    fn metadata_normalizes_jam_artists_ads_and_spoken_types() {
+        let mut item = MediaItem {
+            uri: "spotify:show:book".into(),
+            name: "Book".into(),
+            kind: MediaKind::Show,
+            images: vec![],
+            duration_ms: None,
+            uid: None,
+            raw: serde_json::json!({"__typename":"Audiobook","authorsV2":{"items":[{"name":"Author"}]},"decorations":{"creators":[{"entity":{"uri":"spotify:artist:a","profile":{"name":"Artist"}}}]},"metadata":{"is_advertisement":"true","queued_by":"alice"},"playability":{"playable":false}}),
+        };
+        let metadata = item.metadata();
+        assert!(metadata.audiobook && metadata.advertisement);
+        assert_eq!(metadata.artists[0].name, "Artist");
+        assert_eq!(metadata.authors[0].name, "Author");
+        assert_eq!(metadata.queued_by.as_deref(), Some("alice"));
+        assert!(item.require_playable().is_err());
+        item.raw = Value::Null;
+        assert_eq!(item.metadata().playable, None);
+        assert!(item.require_playable().is_ok());
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub enum QualitySource {
+    WebStream,
+    DevicePreference,
+}
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct QualityReport {
+    pub quality: Option<AudioQuality>,
+    pub source: QualitySource,
+    /// Device/account capability, not proof of a delivered lossless stream.
+    pub lossless_available: bool,
+}

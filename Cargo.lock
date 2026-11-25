@@ -3152,7 +3152,7 @@ dependencies = [
 
 [[package]]
 name = "spotcore"
-version = "0.1.11"
+version = "0.2.0"
 dependencies = [
  "futures-util",
  "serde_json",
@@ -3166,7 +3166,7 @@ dependencies = [
 
 [[package]]
 name = "spotcore-auth"
-version = "0.1.11"
+version = "0.2.0"
 dependencies = [
  "keyring",
  "serde",
@@ -3177,7 +3177,7 @@ dependencies = [
 
 [[package]]
 name = "spotcore-core"
-version = "0.1.11"
+version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -3185,7 +3185,7 @@ dependencies = [
 
 [[package]]
 name = "spotcore-engine"
-version = "0.1.11"
+version = "0.2.0"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
@@ -3193,7 +3193,7 @@ dependencies = [
 
 [[package]]
 name = "spotcore-ffi"
-version = "0.1.11"
+version = "0.2.0"
 dependencies = [
  "boltffi",
  "futures-executor",
@@ -3205,7 +3205,7 @@ dependencies = [
 
 [[package]]
 name = "spotcore-native"
-version = "0.1.11"
+version = "0.2.0"
 dependencies = [
  "flate2",
  "futures-util",
@@ -3224,7 +3224,7 @@ dependencies = [
 
 [[package]]
 name = "spotcore-node"
-version = "0.1.11"
+version = "0.2.0"
 dependencies = [
  "napi",
  "napi-build",
@@ -3234,7 +3234,7 @@ dependencies = [
 
 [[package]]
 name = "spotcore-system-engine"
-version = "0.1.11"
+version = "0.2.0"
 dependencies = [
  "libc",
  "serde_json",
@@ -3250,7 +3250,7 @@ dependencies = [
 
 [[package]]
 name = "spotcore-web"
-version = "0.1.11"
+version = "0.2.0"
 dependencies = [
  "base64 0.22.1",
  "futures-util",

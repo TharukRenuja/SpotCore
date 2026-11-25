@@ -7,8 +7,9 @@ pub use spotcore_auth::{
     SoloistCredentials, WebCredentials, WebSession,
 };
 pub use spotcore_core::{
-    AudioQuality, Backend, BackendFuture, Capabilities, Command, CursorPage, EngineFailure, Error,
-    Image, MediaItem, MediaKind, Page, Paging, Paths, PlaybackEvent, PlaybackState, PlayerSnapshot,
+    AudioQuality, Backend, BackendFuture, Capabilities, Command, Creator, CursorPage,
+    EngineFailure, Error, FeatureRestriction, Image, MediaItem, MediaKind, MediaMetadata, Page,
+    Paging, Paths, PlaybackEvent, PlaybackState, PlayerSnapshot, QualityReport, QualitySource,
     Queue, QueueItem, RepeatMode, ShuffleMode,
 };
 

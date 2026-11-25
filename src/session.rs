@@ -1,8 +1,8 @@
 use crate::web::{Api, ManagedHost, WebBackend};
 use crate::{
     AppliedQuality, AudioQuality, Backend, BackendFuture, Capabilities, Client, Command, Error,
-    PlaybackEvent, PlaybackMode, PlayerSnapshot, Queue, QueueItem, RepeatMode, ShuffleMode,
-    SpotCoreBuilder, Spotify,
+    PlaybackEvent, PlaybackMode, PlayerSnapshot, QualityReport, QualitySource, Queue, QueueItem,
+    RepeatMode, ShuffleMode, SpotCoreBuilder, Spotify,
 };
 use std::time::Duration;
 
@@ -46,6 +46,177 @@ impl SpotCore {
             ));
         }
         Ok(device)
+    }
+
+    pub async fn quality_report(&self) -> Result<QualityReport, Error> {
+        if self.playback_mode() == PlaybackMode::Native {
+            let device = self.local_device().await?.ok_or(Error::Disconnected)?;
+            return Ok(QualityReport {
+                quality: Some(self.api.devices().audio_quality(&device).await?),
+                source: QualitySource::DevicePreference,
+                lossless_available: device.lossless_supported && device.lossless_eligible,
+            });
+        }
+        let info = self.audio_info().await?;
+        let quality = [
+            AudioQuality::Auto,
+            AudioQuality::Low,
+            AudioQuality::Normal,
+            AudioQuality::High,
+            AudioQuality::VeryHigh,
+            AudioQuality::Lossless,
+            AudioQuality::HiRes,
+        ]
+        .into_iter()
+        .find(|quality| quality.as_str() == info.level);
+        Ok(QualityReport {
+            quality,
+            source: QualitySource::WebStream,
+            lossless_available: false,
+        })
+    }
+
+    /// Wait for the owned receiver without activating or transferring playback.
+    pub async fn wait_ready(&mut self, timeout: Duration) -> Result<crate::web::Device, Error> {
+        tokio::time::timeout(timeout, async {
+            loop {
+                let delay = match self.local_device().await {
+                    Ok(Some(device)) => return Ok(device),
+                    Ok(None) | Err(Error::Disconnected | Error::Timeout) => Duration::from_secs(1),
+                    Err(Error::Http {
+                        status: 429,
+                        retry_after,
+                    }) => Duration::from_secs(retry_after.unwrap_or(30).max(1)),
+                    Err(Error::Http {
+                        status: 500..=599, ..
+                    }) => Duration::from_secs(1),
+                    Err(error) => return Err(error),
+                };
+                tokio::time::sleep(delay).await;
+            }
+        })
+        .await
+        .map_err(|_| Error::Timeout)?
+    }
+
+    /// Play a verified audiobook chapter. No chapter selection means chapter one, not server resume.
+    pub async fn play_audiobook(
+        &mut self,
+        value: &str,
+        chapter: Option<&str>,
+        position: Duration,
+        device: Option<&str>,
+    ) -> Result<(), Error> {
+        let book = self.api.podcasts().audiobook_info(value).await?;
+        let uri = match chapter {
+            Some(uri) => {
+                let item = self.api.podcasts().episode(uri).await?;
+                let parent = item
+                    .raw
+                    .pointer("/audiobookV2/data/uri")
+                    .or_else(|| item.raw.pointer("/podcastV2/data/uri"))
+                    .and_then(crate::web::Value::as_str);
+                if parent != Some(book.uri.as_str()) {
+                    return Err(Error::InvalidInput(
+                        "could not verify chapter membership in this audiobook",
+                    ));
+                }
+                item.require_playable()?;
+                uri.to_owned()
+            }
+            None => {
+                if !position.is_zero() {
+                    return Err(Error::InvalidInput(
+                        "an audiobook resume position requires its chapter URI",
+                    ));
+                }
+                let page = self
+                    .api
+                    .podcasts()
+                    .chapters(
+                        &book.uri,
+                        crate::Paging {
+                            offset: 0,
+                            limit: 50,
+                        },
+                    )
+                    .await?;
+                let item = page
+                    .items
+                    .first()
+                    .ok_or_else(|| Error::FeatureUnavailable {
+                        feature: "audiobook_playback".into(),
+                        reason: crate::FeatureRestriction::TitleLocked,
+                    })?;
+                item.require_playable()?;
+                item.uri.clone()
+            }
+        };
+        self.play_spoken(&uri, position, device).await
+    }
+
+    /// Play one spoken item, restoring its position only after the receiver confirms the item.
+    pub async fn play_spoken(
+        &mut self,
+        uri: &str,
+        position: Duration,
+        device: Option<&str>,
+    ) -> Result<(), Error> {
+        if !matches!(uri.split(':').nth(1), Some("episode" | "chapter")) {
+            return Err(Error::InvalidInput(
+                "spoken playback requires an episode or chapter URI",
+            ));
+        }
+        let id = uri.rsplit(':').next().unwrap_or_default();
+        if uri.split(':').count() != 3
+            || id.is_empty()
+            || !id.bytes().all(|byte| byte.is_ascii_alphanumeric())
+        {
+            return Err(Error::InvalidInput("invalid spoken item URI"));
+        }
+        if uri.starts_with("spotify:episode:") {
+            self.api.podcasts().episode(uri).await?.require_playable()?;
+        }
+        let native_here = self.playback_mode() == PlaybackMode::Native
+            && match device {
+                None => true,
+                Some(id) => self
+                    .local_device()
+                    .await?
+                    .is_some_and(|local| local.id == id),
+            };
+        if native_here {
+            self.play(uri).await?;
+            if !position.is_zero() {
+                tokio::time::timeout(Duration::from_secs(10), async {
+                    loop {
+                        if self
+                            .refresh_state()
+                            .await?
+                            .and_then(|state| state.track)
+                            .is_some_and(|track| track.uri == uri)
+                        {
+                            break Ok::<(), Error>(());
+                        }
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                    }
+                })
+                .await
+                .map_err(|_| Error::Timeout)??;
+                self.seek(position).await?;
+            }
+            return Ok(());
+        }
+        let command = Command::PlayContext {
+            uri: uri.into(),
+            track: None,
+            index: None,
+            position: Some(position),
+        };
+        match device {
+            Some(id) => self.execute_on(id, command).await,
+            None => self.execute(command).await,
+        }
     }
 
     /// Transfers to the owned player without starting audio. Called for an explicit local Play.
@@ -577,6 +748,7 @@ fn web_control(command: &Command) -> bool {
             | Command::SkipToQueue(_)
             | Command::PlayContext { .. }
             | Command::SetSpeed(_)
+            | Command::SetRepeat(_)
             | Command::SetShuffleMode(_)
     )
 }
@@ -713,7 +885,11 @@ impl Client<SessionBackend> {
         let web = self.backend.web.refresh().await;
         #[cfg(feature = "native")]
         let native = match &self.backend.native {
-            Some(native) => native.current_snapshot().await,
+            Some(native) => native.current_snapshot().await.map(|mut state| {
+                state.device_id = native.device_id().map(str::to_owned);
+                state.device_name = native.device_name().map(str::to_owned);
+                state
+            }),
             None => None,
         };
         #[cfg(not(feature = "native"))]
@@ -725,6 +901,21 @@ impl Client<SessionBackend> {
         if let Some(state) = &mut state {
             state.capabilities = self.backend.capabilities();
             if let Ok(Some(web)) = &web
+                && state
+                    .device_id
+                    .as_ref()
+                    .zip(web.device_id.as_ref())
+                    .is_some_and(|(local, remote)| local == remote)
+                && web.volume.is_some()
+            {
+                state.volume = web.volume;
+            }
+            if let Ok(Some(web)) = &web
+                && state
+                    .device_id
+                    .as_ref()
+                    .zip(web.device_id.as_ref())
+                    .is_none_or(|(local, remote)| local == remote)
                 && state.track.as_ref().map(|track| &track.uri)
                     == web.track.as_ref().map(|track| &track.uri)
             {
@@ -749,6 +940,21 @@ impl Client<SessionBackend> {
         Ok(self.backend.web.api().queues().snapshot().await?.queue)
     }
     pub async fn volume(&self) -> Result<f64, Error> {
+        #[cfg(feature = "native")]
+        if let Some(native) = &self.backend.native {
+            let device = crate::spotify::native_device(self.backend.web.api(), native).await?;
+            if let Some(volume) = device.volume {
+                return Ok(volume);
+            }
+            if !device.supports_volume {
+                return Err(Error::Unsupported);
+            }
+            return native
+                .current_snapshot()
+                .await
+                .and_then(|state| state.volume)
+                .ok_or(Error::Unsupported);
+        }
         self.backend.web.volume().await
     }
     pub async fn audio_info(&self) -> Result<crate::AudioInfo, Error> {
@@ -1092,6 +1298,9 @@ mod tests {
         assert!(web_control(&Command::ClearQueue));
         assert!(web_control(&Command::SetShuffleMode(ShuffleMode::Smart)));
         assert!(web_control(&Command::SetSpeed(1.25)));
+        assert!(web_control(&Command::SetRepeat(RepeatMode::Off)));
+        assert!(web_control(&Command::SetRepeat(RepeatMode::Context)));
+        assert!(web_control(&Command::SetRepeat(RepeatMode::Track)));
         assert!(!web_control(&Command::Load("spotify:track:test".into())));
         assert!(!web_control(&Command::Pause));
     }

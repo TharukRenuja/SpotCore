@@ -247,6 +247,31 @@ impl AccountStore {
         file.lock()?;
         Ok(file)
     }
+    /// Merge a verified Web login under the store lock, preserving Native credentials and preferences.
+    pub fn save_web_login(
+        &self,
+        id: &str,
+        name: String,
+        tier: AccountTier,
+        web: WebCredentials,
+    ) -> std::io::Result<AccountMetadata> {
+        let _lock = self.lock()?;
+        let mut profile = self
+            .load_unlocked(id)?
+            .unwrap_or_else(|| AccountProfile::new(id));
+        profile.display_name = Some(name);
+        profile.tier = Some(tier);
+        profile.tier_checked_at_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()
+            .and_then(|duration| duration.as_millis().try_into().ok());
+        profile.web = Some(web);
+        self.save_unlocked(&profile)?;
+        self.read_record(id)?
+            .map(|(metadata, _)| metadata)
+            .ok_or_else(|| std::io::Error::other("saved account metadata is missing"))
+    }
+
     pub fn save_profile(&self, profile: &AccountProfile) -> std::io::Result<()> {
         let _lock = self.lock()?;
         self.save_unlocked(profile)
@@ -475,6 +500,28 @@ fn write_private(path: &Path, data: &[u8]) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn verified_web_login_preserves_native_identity_and_preferences() {
+        let store = temp_store("web_login_merge");
+        let mut profile = AccountProfile::new("listener");
+        profile.prefer_native = Some(true);
+        profile.soloist = Some(SoloistCredentials {
+            api_key: Some("native-fixture".into()),
+        });
+        store.save_profile(&profile).unwrap();
+        let web: WebCredentials =
+            serde_json::from_value(serde_json::json!({"sp_dc":"web-fixture"})).unwrap();
+        let metadata = store
+            .save_web_login("listener", "Listener".into(), AccountTier::Premium, web)
+            .unwrap();
+        assert_eq!(metadata.prefer_native, Some(true));
+        let restored = store.load_profile("listener").unwrap().unwrap();
+        assert_eq!(restored.soloist, profile.soloist);
+        assert_eq!(restored.web.unwrap().sp_dc.as_deref(), Some("web-fixture"));
+        assert!(restored.tier_checked_at_ms.is_some());
+        let _ = std::fs::remove_dir_all(store.base_dir);
+    }
 
     #[test]
     fn playback_preference_survives_saved_account_reload() {

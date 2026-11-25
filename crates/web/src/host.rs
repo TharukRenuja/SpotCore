@@ -572,14 +572,14 @@ fn prepare_chromium_drm(
     browser: &Path,
     library: Option<&Path>,
 ) -> Result<(), Error> {
-    let Some(library) = library else {
+    if library.is_none() {
         return Ok(());
-    };
+    }
     std::fs::create_dir_all(profile)
         .map_err(|_| Error::Backend("could not prepare Chromium profile".into()))?;
     #[cfg(target_os = "linux")]
     if let Some(component) = library
-        .parent()
+        .and_then(Path::parent)
         .into_iter()
         .flat_map(|p| p.ancestors())
         .take(4)

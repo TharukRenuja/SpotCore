@@ -37,6 +37,7 @@ Direct duration arguments (`position`, `amount`) are integer **milliseconds**. `
 | `catalog.recommendations` | `seed_tracks: Vec<String>, seed_artists: Vec<String>, limit: u32` | `Vec<MediaItem>` |
 | `catalog.related_artists` | `value: String` | `Value` |
 | `catalog.similar_albums` | `value: String, limit: u32` | `Value` |
+| `catalog.statistics` | `value: String` | `CatalogStatistics` |
 | `catalog.track` | `value: String` | `MediaItem` |
 | `catalog.track_info` | `value: String` | `TrackInfo` |
 
@@ -62,14 +63,18 @@ Direct duration arguments (`position`, `amount`) are integer **milliseconds**. `
 | Operation | Arguments | Result |
 | --- | --- | --- |
 | `extras.canvas` | `value: String` | `Value` |
+| `extras.chapter_markers` | `value: String` | `crate::ChapterMarkers` |
 | `extras.credits` | `value: String` | `Value` |
 | `extras.is_artist_banned` | `values: Vec<String>` | `Value` |
 | `extras.is_excluded_from_taste` | `values: Vec<String>` | `Value` |
 | `extras.lyrics` | `value: String` | `Value` |
+| `extras.lyrics_info` | `value: String` | `Option<SpotifyLyrics>` |
 | `extras.prerelease` | `value: String` | `Value` |
+| `extras.prerelease_info` | `value: String` | `PrereleaseInfo` |
 | `extras.radio` | `value: String` | `Value` |
 | `extras.radio_tracks` | `seed: String, limit: u32` | `Vec<MediaItem>` |
 | `extras.radio_uri` | `seed: String` | `Option<String>` |
+| `extras.resolve_share_url` | `value: String` | `String` |
 | `extras.set_artist_banned` | `value: String, enabled: bool` | `Value` |
 | `extras.set_excluded_from_taste` | `value: String, enabled: bool` | `Value` |
 
@@ -85,6 +90,7 @@ Direct duration arguments (`position`, `amount`) are integer **milliseconds**. `
 | `home.feed_info` | `timezone: String, facet: Option<String>, items_per_shelf: u32` | `HomeFeed` |
 | `home.made_for_you` | `timezone: String, paging: Paging` | `Page<MediaItem>` |
 | `home.new_releases` | `paging: Paging` | `Page<MediaItem>` |
+| `home.recover_media` | `uris: Vec<String>, paging: Paging` | `RecoveryPage` |
 | `home.section` | `value: String, timezone: String, paging: Paging` | `Page<MediaItem>` |
 | `home.top_mixes` | `timezone: String, paging: Paging` | `Page<MediaItem>` |
 | `home.whats_new` | `paging: Paging` | `Page<MediaItem>` |
@@ -96,6 +102,7 @@ Direct duration arguments (`position`, `amount`) are integer **milliseconds**. `
 | `jam.availability` | `{}` | `Value` |
 | `jam.end` | `{}` | `Value` |
 | `jam.end_session` | `id: String` | `()` |
+| `jam.invitation_url` | `id: String` | `String` |
 | `jam.invite_link` | `session_id: String` | `Value` |
 | `jam.join` | `token: String` | `Value` |
 | `jam.join_as` | `token: String, listen_on_device: bool` | `Value` |
@@ -110,6 +117,7 @@ Direct duration arguments (`position`, `amount`) are integer **milliseconds**. `
 | `jam.set_participant_volume_control` | `enabled: bool` | `Value` |
 | `jam.set_queue_only` | `enabled: bool` | `Value` |
 | `jam.start` | `{}` | `Value` |
+| `jam.start_session` | `{}` | `JamSession` |
 | `jam.state` | `{}` | `Option<JamSession>` |
 
 ## Library
@@ -117,6 +125,7 @@ Direct duration arguments (`position`, `amount`) are integer **milliseconds**. `
 | Operation | Arguments | Result |
 | --- | --- | --- |
 | `library.add` | `values: Vec<String>` | `Value` |
+| `library.all_playlists` | `{}` | `Vec<MediaItem>` |
 | `library.contains` | `values: Vec<String>` | `Vec<bool>` |
 | `library.create_folder` | `name: String` | `Value` |
 | `library.delete_folder` | `value: String` | `Value` |
@@ -154,11 +163,14 @@ Direct duration arguments (`position`, `amount`) are integer **milliseconds**. `
 | `playback.next` | `{}` | `()` |
 | `playback.pause` | `{}` | `()` |
 | `playback.play` | `uri: String` | `()` |
+| `playback.play_audiobook` | `value: String, chapter: Option<String>, position: u64, device: Option<String>` | `()` |
 | `playback.play_context` | `uri: String, track: Option<String>, index: Option<u32>, position: Option<u64>` | `()` |
 | `playback.play_items` | `context: Option<String>, uris: Vec<String>, position: u64` | `()` |
 | `playback.play_on` | `device: String, uri: String` | `()` |
+| `playback.play_spoken` | `uri: String, position: u64, device: Option<String>` | `()` |
 | `playback.position_ms` | `{}` | `u64` |
 | `playback.previous` | `{}` | `()` |
+| `playback.quality_report` | `{}` | `QualityReport` |
 | `playback.queue` | `{}` | `Queue` |
 | `playback.refresh_state` | `{}` | `Option<PlayerSnapshot>` |
 | `playback.remove_from_queue` | `items: Vec<QueueItem>` | `()` |
@@ -177,6 +189,7 @@ Direct duration arguments (`position`, `amount`) are integer **milliseconds**. `
 | `playback.stop` | `{}` | `()` |
 | `playback.toggle` | `{}` | `()` |
 | `playback.volume` | `{}` | `f64` |
+| `playback.wait_ready` | `timeout: u64` | `crate::web::Device` |
 
 ## Playlists
 
@@ -187,6 +200,7 @@ Direct duration arguments (`position`, `amount`) are integer **milliseconds**. `
 | `playlists.added_by` | `value: String, paging: Paging` | `Page<PlaylistAdder>` |
 | `playlists.collaborator_invite` | `value: String` | `String` |
 | `playlists.create` | `name: String, folder: Option<String>` | `Value` |
+| `playlists.create_playlist` | `name: String, folder: Option<String>` | `String` |
 | `playlists.delete` | `value: String` | `Value` |
 | `playlists.follow` | `value: String` | `Value` |
 | `playlists.follow_artist` | `value: String` | `Value` |
@@ -201,6 +215,7 @@ Direct duration arguments (`position`, `amount`) are integer **milliseconds**. `
 | `playlists.published` | `value: String` | `Value` |
 | `playlists.recommended` | `value: String, limit: u32, skip: Vec<String>` | `Vec<TrackInfo>` |
 | `playlists.remove_member` | `value: String, username: String` | `Value` |
+| `playlists.remove_rows` | `value: String, selected: Vec<PlaylistSelection>` | `()` |
 | `playlists.remove_tracks` | `value: String, uids: Vec<String>` | `Value` |
 | `playlists.rename` | `value: String, name: String` | `Value` |
 | `playlists.rows` | `value: String, paging: Paging` | `Page<PlaylistRow>` |
@@ -220,6 +235,7 @@ Direct duration arguments (`position`, `amount`) are integer **milliseconds**. `
 | Operation | Arguments | Result |
 | --- | --- | --- |
 | `podcasts.audiobook` | `value: String` | `Value` |
+| `podcasts.audiobook_info` | `value: String` | `ShowInfo` |
 | `podcasts.chapters` | `value: String, paging: Paging` | `Page<MediaItem>` |
 | `podcasts.episode` | `value: String` | `MediaItem` |
 | `podcasts.episode_info` | `value: String` | `EpisodeInfo` |
@@ -241,6 +257,7 @@ Direct duration arguments (`position`, `amount`) are integer **milliseconds**. `
 | `queues.move_items` | `snapshot: QueueSnapshot, items: Vec<QueueItem>, before: Option<QueueItem>, after: Option<QueueItem>, manual: Option<bool>` | `()` |
 | `queues.remove` | `snapshot: QueueSnapshot, items: Vec<QueueItem>` | `()` |
 | `queues.replace_manual` | `uris: Vec<String>` | `()` |
+| `queues.skip_to` | `snapshot: QueueSnapshot, item: QueueItem` | `()` |
 | `queues.snapshot` | `{}` | `QueueSnapshot` |
 
 ## Recents
@@ -248,6 +265,7 @@ Direct duration arguments (`position`, `amount`) are integer **milliseconds**. `
 | Operation | Arguments | Result |
 | --- | --- | --- |
 | `recents.entries` | `paging: Paging` | `Value` |
+| `recents.items` | `paging: Paging` | `Page<MediaItem>` |
 
 ## Search
 
@@ -265,15 +283,21 @@ Direct duration arguments (`position`, `amount`) are integer **milliseconds**. `
 
 | Operation | Arguments | Result |
 | --- | --- | --- |
+| `users.activity` | `{}` | `Vec<FriendActivity>` |
+| `users.availability` | `{}` | `AccountAvailability` |
 | `users.follow` | `values: Vec<String>` | `Value` |
 | `users.followers` | `value: String` | `Value` |
+| `users.followers_info` | `value: String` | `Vec<ProfileCard>` |
 | `users.following` | `value: String` | `Value` |
+| `users.following_info` | `value: String` | `Vec<ProfileCard>` |
 | `users.friend_activity` | `{}` | `Value` |
 | `users.history` | `{}` | `Value` |
 | `users.is_blocked` | `value: String` | `bool` |
 | `users.is_following` | `values: Vec<String>` | `Value` |
 | `users.me` | `{}` | `Account` |
 | `users.profile` | `value: String` | `Value` |
+| `users.profile_info` | `value: String` | `UserProfileInfo` |
+| `users.rankings` | `range: TimeRange, limit: u32` | `UserRankings` |
 | `users.set_blocked` | `value: String, blocked: bool` | `Value` |
 | `users.set_private_session` | `enabled: bool` | `Value` |
 | `users.top` | `range: TimeRange, limit: u32` | `Value` |
