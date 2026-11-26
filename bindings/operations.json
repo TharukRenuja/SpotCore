@@ -200,6 +200,13 @@
     "result": "()"
   },
   {
+    "operation": "devices.equalizer",
+    "arguments": {
+      "device": "Device"
+    },
+    "result": "EqualizerSettings"
+  },
+  {
     "operation": "devices.insert_queue_items",
     "arguments": {
       "device": "String",
@@ -260,6 +267,14 @@
       "quality": "AudioQuality"
     },
     "result": "AudioQuality"
+  },
+  {
+    "operation": "devices.set_equalizer_enabled",
+    "arguments": {
+      "device": "Device",
+      "enabled": "bool"
+    },
+    "result": "EqualizerSettings"
   },
   {
     "operation": "devices.transfer",

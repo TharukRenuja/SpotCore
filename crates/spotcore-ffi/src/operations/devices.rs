@@ -46,6 +46,15 @@ pub(super) async fn call(
                     .await?,
             )
         }
+        "equalizer" => {
+            #[derive(serde::Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Args {
+                device: Device,
+            }
+            let p: Args = parse(arguments)?;
+            encode(sdk.devices().equalizer(&p.device).await?)
+        }
         "insert_queue_items" => {
             #[derive(serde::Deserialize)]
             #[serde(deny_unknown_fields)]
@@ -125,6 +134,20 @@ pub(super) async fn call(
             encode(
                 sdk.devices()
                     .set_audio_quality(&p.device, p.quality)
+                    .await?,
+            )
+        }
+        "set_equalizer_enabled" => {
+            #[derive(serde::Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Args {
+                device: Device,
+                enabled: bool,
+            }
+            let p: Args = parse(arguments)?;
+            encode(
+                sdk.devices()
+                    .set_equalizer_enabled(&p.device, p.enabled)
                     .await?,
             )
         }

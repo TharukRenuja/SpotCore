@@ -86,6 +86,7 @@ Use `BrowserRole::Services` for data and remote control without starting a brows
 | Add, clear, remove, insert and reorder queue rows | **Yes.** HTTP edits require an active receiver. Exact row edits use returned URI/UID pairs. |
 | Jump directly to a queue row | **Yes, over HTTP Connect.** Requires a current visible row with an exact URI/UID and permission to skip. |
 | Playback events | **Web and native sessions.** Services-only apps poll state. |
+| Receiver EQ preferences | Read six-band settings and toggle enabled state through Spotify’s device-settings service. Stored preference confirmation only; band writes and audible processing are not verified. |
 | Audio quality | **Web: up to VeryHigh. Native: device/account-supported levels.** A selected preference does not prove delivered audio quality. |
 | Host a Jam, share an invite and end it | **Yes, with Premium and an available Connect receiver.** Soloist can be the receiver. |
 | Join a Jam as a guest | **Yes.** Free guests can join and queue; audio plays on the host's device. |

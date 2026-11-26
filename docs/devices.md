@@ -48,6 +48,12 @@ Quality choices require the receiver’s explicit remote-control flag and known 
 
 In cookie-backed Services mode, ordinary controls act on an existing active receiver. No receiver means no local playback. Handle `Disconnected`, `Unsupported` or the returned backend error rather than assuming a transfer succeeded.
 
+## Receiver equalizer preferences
+
+`devices().equalizer(&device)` reads an explicit enabled flag and six gain values in low-shelf, low-peak, low-mid, high-mid, high-peak and high-shelf order. `set_equalizer_enabled(&device, enabled)` changes only the enabled flag, preserving all gains, and checks readback. Both target the supplied receiver without transferring or starting playback. A write refreshes receiver discovery and rejects missing or restricted targets. Missing or malformed EQ fields return `Unsupported` rather than invented defaults.
+
+These methods confirm Spotify’s stored receiver preference, not audible processing. Gain values retain the receiver’s representation; no dB conversion or gain-write API is provided until its scale is verified. A successful toggle with flat bands does not establish a change in the audio signal.
+
 ## Devices method reference
 
 Receiver arguments are omitted. `Value` means `serde_json::Value`. The return column includes the complete `Result` type.
@@ -55,6 +61,8 @@ Receiver arguments are omitted. `Value` means `serde_json::Value`. The return co
 | Method and inputs | Returns | Behavior |
 | --- | --- | --- |
 | `list()` | `Result<Vec<Device>, Error>` | Discover Connect devices for the account. |
+| `equalizer(device: &Device)` | `Result<EqualizerSettings, Error>` | Read explicit EQ enable and six-band gain preferences. |
+| `set_equalizer_enabled(device: &Device, enabled: bool)` | `Result<EqualizerSettings, Error>` | Toggle EQ only, preserve gains and confirm enabled-state readback. |
 | `audio_quality_options(device: &Device)` | `Result<Vec<AudioQuality>, Error>` | Intersect reported remote-control support, maximum quality, account tier and explicit lossless eligibility. Unknown support returns `Unsupported`. |
 | `audio_quality(device: &Device)` | `Result<AudioQuality, Error>` | Read the reported device-quality setting. |
 | `set_audio_quality(device: &Device, quality: AudioQuality)` | `Result<AudioQuality, Error>` | Write the setting then read it back. Not stream measurement. |

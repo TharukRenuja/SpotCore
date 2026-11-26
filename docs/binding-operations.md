@@ -48,6 +48,7 @@ Direct duration arguments (`position`, `amount`) are integer **milliseconds**. `
 | `devices.audio_quality` | `device: Device` | `AudioQuality` |
 | `devices.audio_quality_options` | `device: Device` | `Vec<AudioQuality>` |
 | `devices.edit_queue_occurrence` | `device: String, item: QueueItem, before: Option<QueueItem>, after: Option<QueueItem>, manual: Option<bool>` | `()` |
+| `devices.equalizer` | `device: Device` | `EqualizerSettings` |
 | `devices.insert_queue_items` | `device: String, uris: Vec<String>, before: Option<QueueItem>, after: Option<QueueItem>, manual: bool` | `()` |
 | `devices.list` | `{}` | `Vec<Device>` |
 | `devices.play_items` | `target: Option<String>, context: Option<String>, uris: Vec<String>, position: std::time::Duration` | `()` |
@@ -57,6 +58,7 @@ Direct duration arguments (`position`, `amount`) are integer **milliseconds**. `
 | `devices.queue_snapshot` | `{}` | `spotcore_core::Queue` |
 | `devices.replace_queued` | `device: String, uris: Vec<String>` | `()` |
 | `devices.set_audio_quality` | `device: Device, quality: AudioQuality` | `AudioQuality` |
+| `devices.set_equalizer_enabled` | `device: Device, enabled: bool` | `EqualizerSettings` |
 | `devices.transfer` | `device_id: String, play: bool` | `Value` |
 
 ## Extras

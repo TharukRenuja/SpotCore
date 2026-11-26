@@ -470,6 +470,39 @@ fn reported_quality(response: &Value) -> Option<AudioQuality> {
     AudioQuality::from_level_name(response["device_settings"][0]["audio_quality"].as_str()?)
 }
 
+/// Receiver-reported six-band EQ preferences, not a measurement of the audio signal.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct EqualizerSettings {
+    pub enabled: bool,
+    /// Low shelf, low peak, low-mid peak, high-mid peak, high peak, high shelf.
+    /// Values retain the receiver's gain representation; no dB conversion is assumed.
+    pub gains: [f64; 6],
+}
+
+fn reported_equalizer(response: &Value) -> Result<EqualizerSettings, Error> {
+    let settings = response
+        .pointer("/device_settings/0")
+        .ok_or(Error::Unsupported)?;
+    let enabled = settings["equalizer_enabled"]
+        .as_bool()
+        .ok_or(Error::Unsupported)?;
+    let mut gains = [0.0; 6];
+    for (gain, key) in gains.iter_mut().zip([
+        "equalizer_low_shelf_gain",
+        "equalizer_low_peak_gain",
+        "equalizer_low_mid_peak_gain",
+        "equalizer_high_mid_peak_gain",
+        "equalizer_high_peak_gain",
+        "equalizer_high_shelf_gain",
+    ]) {
+        *gain = settings[key]
+            .as_f64()
+            .filter(|gain| gain.is_finite())
+            .ok_or(Error::Unsupported)?;
+    }
+    Ok(EqualizerSettings { enabled, gains })
+}
+
 fn quality_options(device: &Device, tier: AccountTier) -> Result<Vec<AudioQuality>, Error> {
     let caps = &device.raw["capabilities"];
     if device.restricted || caps["supports_remote_audio_quality_control"] != true {
@@ -667,6 +700,53 @@ impl Devices<'_> {
             .ok_or_else(|| Error::Backend("device list was not an array".into()))?;
         Ok(rows.iter().filter_map(Device::parse).collect())
     }
+    /// Reads the six-band device-settings preference. Absent/unknown fields return `Unsupported`.
+    pub async fn equalizer(&self, device: &Device) -> Result<EqualizerSettings, Error> {
+        let response = self
+            .0
+            .request(
+                "POST",
+                &format!("{PLAYBACK_SETTINGS}/GetDeviceSettings"),
+                Some(quality_request(device)),
+            )
+            .await?;
+        reported_equalizer(&response)
+    }
+
+    /// Changes only EQ's enabled state, preserving all band gains, then confirms readback.
+    /// This confirms a stored preference, not audible signal processing.
+    pub async fn set_equalizer_enabled(
+        &self,
+        device: &Device,
+        enabled: bool,
+    ) -> Result<EqualizerSettings, Error> {
+        let current = self
+            .list()
+            .await?
+            .into_iter()
+            .find(|current| current.id == device.id)
+            .ok_or(Error::Disconnected)?;
+        if current.restricted {
+            return Err(Error::Unsupported);
+        }
+        self.equalizer(&current).await?;
+        self.0
+            .request(
+                "POST",
+                &format!("{PLAYBACK_SETTINGS}/WriteDeviceValue"),
+                Some(json!({
+                    "device_descriptor":descriptor(&current),
+                    "field":[{"id":"EQUALIZER_ENABLED","value":{"bool_value":enabled}}],
+                })),
+            )
+            .await?;
+        let confirmed = self.equalizer(&current).await?;
+        if confirmed.enabled != enabled {
+            return Err(Error::Backend("Spotify has not confirmed the equalizer change; read the current setting before retrying".into()));
+        }
+        Ok(confirmed)
+    }
+
     /// Verified remote-control support and receiver/account limits, not delivered stream formats.
     /// Unknown capabilities or account tier return `Unsupported`; missing lossless eligibility excludes lossless.
     pub async fn audio_quality_options(&self, device: &Device) -> Result<Vec<AudioQuality>, Error> {
@@ -1065,6 +1145,22 @@ fn blend_id(value: &str) -> Result<String, Error> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn equalizer_requires_explicit_enable_and_all_six_band_values() {
+        let mut response = json!({"device_settings":[{
+            "equalizer_enabled":false,"equalizer_low_shelf_gain":0.0,
+            "equalizer_low_peak_gain":1.0,"equalizer_low_mid_peak_gain":2.0,
+            "equalizer_high_mid_peak_gain":3.0,"equalizer_high_peak_gain":4.0,
+            "equalizer_high_shelf_gain":5.0
+        }]});
+        let state = reported_equalizer(&response).unwrap();
+        assert!(!state.enabled);
+        assert_eq!(state.gains, [0.0, 1.0, 2.0, 3.0, 4.0, 5.0]);
+        response["device_settings"][0]["equalizer_high_shelf_gain"] = Value::Null;
+        assert!(reported_equalizer(&response).is_err());
+        assert!(reported_equalizer(&json!({"device_settings":[{}]})).is_err());
+    }
+
     #[test]
     fn quality_choices_intersect_receiver_tier_and_explicit_entitlement() {
         let row = json!({"name":"Receiver","capabilities":{"supports_remote_audio_quality_control":true,"supported_audio_quality":"HIFI","supports_hifi":{"device_supported":true}}});
