@@ -172,26 +172,33 @@
 
   // Plain JSON copy of whatever a service returns: drops functions, breaks cycles,
   // turns Maps/Sets into objects/arrays and BigInts into strings.
-  const toJson = (value, depth = 0, seen = new WeakSet()) => {
+  const toJson = (value, depth = 0, ancestors = new WeakSet(), budget = { nodes: 0 }) => {
     if (value === null || value === undefined) return null;
     const t = typeof value;
     if (t === 'bigint') return value.toString();
     if (t === 'function' || t === 'symbol') return undefined;
     if (t !== 'object') return value;
-    if (depth > 12 || seen.has(value)) return null;
-    seen.add(value);
-    if (value instanceof Date) return value.toISOString();
-    if (value instanceof Map) value = Object.fromEntries(value);
-    if (value instanceof Set) value = [...value];
-    if (ArrayBuffer.isView(value)) return Array.from(value);
-    if (Array.isArray(value)) return value.map(v => { const j = toJson(v, depth + 1, seen); return j === undefined ? null : j; });
-    const out = {};
-    for (const k of Object.keys(value)) {
-      if (k.startsWith('_') && k !== '_uri' && k !== '__typename') continue;
-      const j = toJson(value[k], depth + 1, seen);
-      if (j !== undefined) out[k] = j;
+    // Discovery cards exceed twelve levels. Bound traversal without mistaking
+    // a shared title/artwork object on another branch for a recursive cycle.
+    if (depth > 64 || ++budget.nodes > 100000 || ancestors.has(value)) return null;
+    const original = value;
+    ancestors.add(original);
+    try {
+      if (value instanceof Date) return value.toISOString();
+      if (value instanceof Map) value = Object.fromEntries(value);
+      if (value instanceof Set) value = [...value];
+      if (ArrayBuffer.isView(value)) return Array.from(value);
+      if (Array.isArray(value)) return value.map(v => { const j = toJson(v, depth + 1, ancestors, budget); return j === undefined ? null : j; });
+      const out = {};
+      for (const k of Object.keys(value)) {
+        if (k.startsWith('_') && k !== '_uri' && k !== '__typename') continue;
+        const j = toJson(value[k], depth + 1, ancestors, budget);
+        if (j !== undefined) out[k] = j;
+      }
+      return out;
+    } finally {
+      ancestors.delete(original);
     }
-    return out;
   };
 
   const need = () => {
