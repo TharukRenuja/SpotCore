@@ -11,6 +11,8 @@ mod connect;
 mod cookie;
 mod direct;
 mod domains;
+mod equalizer;
+pub use equalizer::EqualizerPreset;
 pub mod host;
 mod http;
 mod jam;

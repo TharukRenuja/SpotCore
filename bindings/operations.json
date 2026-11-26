@@ -277,6 +277,22 @@
     "result": "EqualizerSettings"
   },
   {
+    "operation": "devices.set_equalizer_gains",
+    "arguments": {
+      "device": "Device",
+      "gains": "[f64; 6]"
+    },
+    "result": "EqualizerSettings"
+  },
+  {
+    "operation": "devices.set_equalizer_preset",
+    "arguments": {
+      "device": "Device",
+      "preset": "spotcore::web::EqualizerPreset"
+    },
+    "result": "EqualizerSettings"
+  },
+  {
     "operation": "devices.transfer",
     "arguments": {
       "device_id": "String",

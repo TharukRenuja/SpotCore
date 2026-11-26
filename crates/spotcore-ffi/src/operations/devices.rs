@@ -151,6 +151,34 @@ pub(super) async fn call(
                     .await?,
             )
         }
+        "set_equalizer_gains" => {
+            #[derive(serde::Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Args {
+                device: Device,
+                gains: [f64; 6],
+            }
+            let p: Args = parse(arguments)?;
+            encode(
+                sdk.devices()
+                    .set_equalizer_gains(&p.device, p.gains)
+                    .await?,
+            )
+        }
+        "set_equalizer_preset" => {
+            #[derive(serde::Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Args {
+                device: Device,
+                preset: spotcore::web::EqualizerPreset,
+            }
+            let p: Args = parse(arguments)?;
+            encode(
+                sdk.devices()
+                    .set_equalizer_preset(&p.device, p.preset)
+                    .await?,
+            )
+        }
         "transfer" => {
             #[derive(serde::Deserialize)]
             #[serde(deny_unknown_fields)]

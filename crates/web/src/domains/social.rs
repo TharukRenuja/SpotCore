@@ -475,8 +475,40 @@ fn reported_quality(response: &Value) -> Option<AudioQuality> {
 pub struct EqualizerSettings {
     pub enabled: bool,
     /// Low shelf, low peak, low-mid peak, high-mid peak, high peak, high shelf.
-    /// Values retain the receiver's gain representation; no dB conversion is assumed.
+    /// Gains in decibels, from -12 through +12.
     pub gains: [f64; 6],
+}
+
+impl EqualizerSettings {
+    /// A recognized curve, or `None` for Manual. No preset identity is stored by Spotify.
+    pub fn preset(&self) -> Option<crate::EqualizerPreset> {
+        crate::EqualizerPreset::from_gains(self.gains)
+    }
+}
+
+fn equalizer_fields(gains: [f64; 6]) -> Result<Value, Error> {
+    if gains
+        .iter()
+        .any(|gain| !gain.is_finite() || !(-12.0..=12.0).contains(gain))
+    {
+        return Err(Error::InvalidInput(
+            "equalizer gains must be finite and between -12 and +12 dB",
+        ));
+    }
+    Ok(Value::Array(
+        [
+            "EQUALIZER_LOW_SHELF_GAIN",
+            "EQUALIZER_LOW_PEAK_GAIN",
+            "EQUALIZER_LOW_MID_PEAK_GAIN",
+            "EQUALIZER_HIGH_MID_PEAK_GAIN",
+            "EQUALIZER_HIGH_PEAK_GAIN",
+            "EQUALIZER_HIGH_SHELF_GAIN",
+        ]
+        .into_iter()
+        .zip(gains)
+        .map(|(id, gain)| json!({"id":id,"value":{"float_value":gain}}))
+        .collect(),
+    ))
 }
 
 fn reported_equalizer(response: &Value) -> Result<EqualizerSettings, Error> {
@@ -745,6 +777,56 @@ impl Devices<'_> {
             return Err(Error::Backend("Spotify has not confirmed the equalizer change; read the current setting before retrying".into()));
         }
         Ok(confirmed)
+    }
+
+    /// Writes all six gains in dB without changing the enabled state, then verifies readback.
+    /// A failed confirmation can leave a partial change. Refresh before retrying.
+    /// Stored settings do not prove the receiver is applying audible processing.
+    pub async fn set_equalizer_gains(
+        &self,
+        device: &Device,
+        gains: [f64; 6],
+    ) -> Result<EqualizerSettings, Error> {
+        let fields = equalizer_fields(gains)?;
+        let current = self
+            .list()
+            .await?
+            .into_iter()
+            .find(|current| current.id == device.id)
+            .ok_or(Error::Disconnected)?;
+        if current.restricted {
+            return Err(Error::Unsupported);
+        }
+        let previous = self.equalizer(&current).await?;
+        self.0
+            .request(
+                "POST",
+                &format!("{PLAYBACK_SETTINGS}/WriteDeviceValue"),
+                Some(json!({"device_descriptor":descriptor(&current),"field":fields})),
+            )
+            .await?;
+        let confirmed = self.equalizer(&current).await?;
+        if confirmed.enabled != previous.enabled
+            || !confirmed
+                .gains
+                .iter()
+                .zip(gains)
+                .all(|(a, b)| (a - b).abs() <= 0.001)
+        {
+            return Err(Error::Backend(
+                "Spotify has not confirmed the equalizer bands; refresh before retrying".into(),
+            ));
+        }
+        Ok(confirmed)
+    }
+
+    /// Applies a built-in Spotify curve while preserving the EQ enabled state.
+    pub async fn set_equalizer_preset(
+        &self,
+        device: &Device,
+        preset: crate::EqualizerPreset,
+    ) -> Result<EqualizerSettings, Error> {
+        self.set_equalizer_gains(device, preset.gains()).await
     }
 
     /// Verified remote-control support and receiver/account limits, not delivered stream formats.
@@ -1315,6 +1397,29 @@ mod tests {
                 "device_id": "receiver-id", "device_name": "SpotDesk"
             }}]})
         );
+    }
+
+    #[test]
+    fn equalizer_bands_validate_before_building_a_six_field_write() {
+        let gains = crate::EqualizerPreset::BassBooster.gains();
+        let fields = equalizer_fields(gains).unwrap();
+        let fields = fields.as_array().unwrap();
+        assert_eq!(fields.len(), 6);
+        assert_eq!(
+            fields[0],
+            json!({"id":"EQUALIZER_LOW_SHELF_GAIN","value":{"float_value":4.25}})
+        );
+        assert_eq!(
+            fields[5],
+            json!({"id":"EQUALIZER_HIGH_SHELF_GAIN","value":{"float_value":0.0}})
+        );
+        assert!(equalizer_fields([-12.0; 6]).is_ok());
+        assert!(equalizer_fields([12.0; 6]).is_ok());
+        for bad in [f64::NAN, f64::INFINITY, -12.001, 12.001] {
+            let mut invalid = gains;
+            invalid[3] = bad;
+            assert!(equalizer_fields(invalid).is_err());
+        }
     }
 
     #[test]
