@@ -109,7 +109,7 @@ impl Spotify<crate::native::NativeBackend> {
             .await
     }
 
-    /// Writes and reads back native quality; ineligible lossless requests clamp to `VeryHigh`.
+    /// Writes and reads back native quality; unavailable receiver/account levels are rejected.
     pub async fn set_quality(&mut self, quality: AudioQuality) -> Result<AppliedQuality, Error> {
         apply_native_quality(&self.api, self.player.backend(), quality).await
     }
@@ -123,15 +123,7 @@ pub(crate) async fn apply_native_quality(
 ) -> Result<AppliedQuality, Error> {
     let device = native_device(api, backend).await?;
     let lossless_available = device.lossless_supported && device.lossless_eligible;
-    let requested = if lossless_available {
-        quality
-    } else {
-        match quality {
-            AudioQuality::Lossless | AudioQuality::HiRes => AudioQuality::VeryHigh,
-            quality => quality,
-        }
-    };
-    let effective = api.devices().set_audio_quality(&device, requested).await?;
+    let effective = api.devices().set_audio_quality(&device, quality).await?;
     Ok(AppliedQuality {
         requested: quality,
         effective,

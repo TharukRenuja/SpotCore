@@ -33,15 +33,18 @@ use spotcore::{AudioQuality, SpotCore};
 async fn quality(spotify: &SpotCore) -> Result<(), spotcore::Error> {
     let devices = spotify.devices().list().await?;
     if let Some(device) = devices.iter().find(|device| device.active) {
-        let preference = spotify.devices()
-            .set_audio_quality(device, AudioQuality::VeryHigh).await?;
-        println!("{preference:?}");
+        let available = spotify.devices().audio_quality_options(device).await?;
+        if available.contains(&AudioQuality::VeryHigh) {
+            let preference = spotify.devices()
+                .set_audio_quality(device, AudioQuality::VeryHigh).await?;
+            println!("{preference:?}");
+        }
     }
     Ok(())
 }
 ```
 
-Quality settings depend on device/account support and do not measure delivered audio. A later `spotify.set_quality()` targets the SDK-selected backend, not necessarily the device most recently passed to `play_on()`.
+Quality choices require the receiver’s explicit remote-control flag and known maximum, plus the current account tier. Missing lossless eligibility excludes Lossless/HiRes even when the device decoder supports them. Region alone does not grant eligibility. A write refreshes the target receiver before validating the requested level; unavailable levels are rejected rather than silently replaced. Quality settings do not measure delivered audio. A later `spotify.set_quality()` targets the SDK-selected backend, not necessarily the device most recently passed to `play_on()`.
 
 In cookie-backed Services mode, ordinary controls act on an existing active receiver. No receiver means no local playback. Handle `Disconnected`, `Unsupported` or the returned backend error rather than assuming a transfer succeeded.
 
@@ -52,6 +55,7 @@ Receiver arguments are omitted. `Value` means `serde_json::Value`. The return co
 | Method and inputs | Returns | Behavior |
 | --- | --- | --- |
 | `list()` | `Result<Vec<Device>, Error>` | Discover Connect devices for the account. |
+| `audio_quality_options(device: &Device)` | `Result<Vec<AudioQuality>, Error>` | Intersect reported remote-control support, maximum quality, account tier and explicit lossless eligibility. Unknown support returns `Unsupported`. |
 | `audio_quality(device: &Device)` | `Result<AudioQuality, Error>` | Read the reported device-quality setting. |
 | `set_audio_quality(device: &Device, quality: AudioQuality)` | `Result<AudioQuality, Error>` | Write the setting then read it back. Not stream measurement. |
 | `transfer(device_id: &str, play: bool)` | `Result<Value, Error>` | Transfer playback to a receiver, optionally starting it. |

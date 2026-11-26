@@ -46,6 +46,7 @@ Direct duration arguments (`position`, `amount`) are integer **milliseconds**. `
 | Operation | Arguments | Result |
 | --- | --- | --- |
 | `devices.audio_quality` | `device: Device` | `AudioQuality` |
+| `devices.audio_quality_options` | `device: Device` | `Vec<AudioQuality>` |
 | `devices.edit_queue_occurrence` | `device: String, item: QueueItem, before: Option<QueueItem>, after: Option<QueueItem>, manual: Option<bool>` | `()` |
 | `devices.insert_queue_items` | `device: String, uris: Vec<String>, before: Option<QueueItem>, after: Option<QueueItem>, manual: bool` | `()` |
 | `devices.list` | `{}` | `Vec<Device>` |

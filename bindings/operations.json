@@ -182,6 +182,13 @@
     "result": "AudioQuality"
   },
   {
+    "operation": "devices.audio_quality_options",
+    "arguments": {
+      "device": "Device"
+    },
+    "result": "Vec<AudioQuality>"
+  },
+  {
     "operation": "devices.edit_queue_occurrence",
     "arguments": {
       "device": "String",

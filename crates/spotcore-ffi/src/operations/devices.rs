@@ -20,6 +20,15 @@ pub(super) async fn call(
             let p: Args = parse(arguments)?;
             encode(sdk.devices().audio_quality(&p.device).await?)
         }
+        "audio_quality_options" => {
+            #[derive(serde::Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Args {
+                device: Device,
+            }
+            let p: Args = parse(arguments)?;
+            encode(sdk.devices().audio_quality_options(&p.device).await?)
+        }
         "edit_queue_occurrence" => {
             #[derive(serde::Deserialize)]
             #[serde(deny_unknown_fields)]

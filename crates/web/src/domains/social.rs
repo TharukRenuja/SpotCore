@@ -418,8 +418,15 @@ impl Device {
             },
             lossless_supported: row["capabilities"]["supports_lossless_audio"]
                 .as_bool()
+                .or_else(|| {
+                    row.pointer("/capabilities/supports_hifi/device_supported")
+                        .and_then(Value::as_bool)
+                })
                 .unwrap_or(false),
-            lossless_eligible: false,
+            lossless_eligible: row
+                .pointer("/capabilities/supports_hifi/user_eligible")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
             restricted: row["is_restricted"]
                 .as_bool()
                 .or(row["capabilities"]["is_restricted"].as_bool())
@@ -461,6 +468,42 @@ fn quality_request(device: &Device) -> Value {
 
 fn reported_quality(response: &Value) -> Option<AudioQuality> {
     AudioQuality::from_level_name(response["device_settings"][0]["audio_quality"].as_str()?)
+}
+
+fn quality_options(device: &Device, tier: AccountTier) -> Result<Vec<AudioQuality>, Error> {
+    let caps = &device.raw["capabilities"];
+    if device.restricted || caps["supports_remote_audio_quality_control"] != true {
+        return Err(Error::Unsupported);
+    }
+    let maximum = caps["supported_audio_quality"]
+        .as_str()
+        .and_then(AudioQuality::from_level_name)
+        .filter(|q| *q != AudioQuality::Auto)
+        .ok_or(Error::Unsupported)?;
+    let account_max = match tier {
+        AccountTier::Premium => {
+            if device.lossless_supported && device.lossless_eligible {
+                AudioQuality::HiRes
+            } else {
+                AudioQuality::VeryHigh
+            }
+        }
+        AccountTier::Free => AudioQuality::High,
+        _ => return Err(Error::Unsupported),
+    };
+    let maximum = maximum.as_level().min(account_max.as_level());
+    Ok([
+        AudioQuality::Auto,
+        AudioQuality::Low,
+        AudioQuality::Normal,
+        AudioQuality::High,
+        AudioQuality::VeryHigh,
+        AudioQuality::Lossless,
+        AudioQuality::HiRes,
+    ]
+    .into_iter()
+    .filter(|q| q.as_level() <= maximum)
+    .collect())
 }
 
 pub struct Devices<'a>(pub(crate) &'a Api);
@@ -624,6 +667,11 @@ impl Devices<'_> {
             .ok_or_else(|| Error::Backend("device list was not an array".into()))?;
         Ok(rows.iter().filter_map(Device::parse).collect())
     }
+    /// Verified remote-control support and receiver/account limits, not delivered stream formats.
+    /// Unknown capabilities or account tier return `Unsupported`; missing lossless eligibility excludes lossless.
+    pub async fn audio_quality_options(&self, device: &Device) -> Result<Vec<AudioQuality>, Error> {
+        quality_options(device, self.0.users().me().await?.tier)
+    }
     /// Reads the audio-quality setting Spotify holds for one device.
     pub async fn audio_quality(&self, device: &Device) -> Result<AudioQuality, Error> {
         let response = self
@@ -643,17 +691,32 @@ impl Devices<'_> {
         device: &Device,
         quality: AudioQuality,
     ) -> Result<AudioQuality, Error> {
+        let current = self
+            .list()
+            .await?
+            .into_iter()
+            .find(|current| current.id == device.id)
+            .ok_or(Error::Disconnected)?;
+        if !self
+            .audio_quality_options(&current)
+            .await?
+            .contains(&quality)
+        {
+            return Err(Error::InvalidInput(
+                "audio quality is unavailable for this account and receiver",
+            ));
+        }
         self.0
             .request(
                 "POST",
                 &format!("{PLAYBACK_SETTINGS}/WriteDeviceValue"),
                 Some(json!({
-                    "device_descriptor": descriptor(device),
+                    "device_descriptor": descriptor(&current),
                     "field": [{"id": "AUDIO_QUALITY", "value": {"int_value": quality.as_level()}}],
                 })),
             )
             .await?;
-        self.audio_quality(device).await
+        self.audio_quality(&current).await
     }
     pub async fn transfer(&self, device_id: &str, play: bool) -> Result<Value, Error> {
         nonempty(device_id)?;
@@ -1002,6 +1065,47 @@ fn blend_id(value: &str) -> Result<String, Error> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn quality_choices_intersect_receiver_tier_and_explicit_entitlement() {
+        let row = json!({"name":"Receiver","capabilities":{"supports_remote_audio_quality_control":true,"supported_audio_quality":"HIFI","supports_hifi":{"device_supported":true}}});
+        let mut device = Device::from_cluster("owned", &row, true).unwrap();
+        assert!(device.lossless_supported);
+        assert!(!device.lossless_eligible);
+        assert_eq!(
+            quality_options(&device, AccountTier::Premium)
+                .unwrap()
+                .last(),
+            Some(&AudioQuality::VeryHigh)
+        );
+        assert_eq!(
+            quality_options(&device, AccountTier::Free).unwrap().last(),
+            Some(&AudioQuality::High)
+        );
+        assert!(quality_options(&device, AccountTier::Unknown).is_err());
+        device.lossless_eligible = true;
+        assert_eq!(
+            quality_options(&device, AccountTier::Premium)
+                .unwrap()
+                .last(),
+            Some(&AudioQuality::Lossless)
+        );
+        device.raw["capabilities"]["supported_audio_quality"] = json!("NORMAL");
+        assert_eq!(
+            quality_options(&device, AccountTier::Premium)
+                .unwrap()
+                .last(),
+            Some(&AudioQuality::Normal)
+        );
+        device.raw["capabilities"]["supported_audio_quality"] = json!("UNKNOWN_FUTURE_LEVEL");
+        assert!(quality_options(&device, AccountTier::Premium).is_err());
+        device.raw["capabilities"]["supported_audio_quality"] = json!("HIFI");
+        device.raw["capabilities"]["supports_remote_audio_quality_control"] = json!(false);
+        assert!(quality_options(&device, AccountTier::Premium).is_err());
+        device.raw["capabilities"]["supports_remote_audio_quality_control"] = json!(true);
+        device.restricted = true;
+        assert!(quality_options(&device, AccountTier::Premium).is_err());
+    }
+
     #[test]
     fn profile_name_update_preserves_wrapper_and_field_mask_wire_format() {
         assert_eq!(
