@@ -4,11 +4,11 @@
 
 ## Pin a Git dependency
 
-**Cargo can build a Git dependency without a crates.io publication.** Select a published release tag from the [releases page](https://github.com/TharukRenuja/SpotCore/releases), or pin a full commit with `rev`. For example, pin the `v0.2.2` release:
+**Cargo can build a Git dependency without a crates.io publication.** Select a published release tag from the [releases page](https://github.com/TharukRenuja/SpotCore/releases), or pin a full commit with `rev`. For example, pin the `v0.2.3` release:
 
 ```toml
 [dependencies]
-spotcore = { git = "https://github.com/TharukRenuja/SpotCore.git", tag = "v0.2.2" }
+spotcore = { git = "https://github.com/TharukRenuja/SpotCore.git", tag = "v0.2.3" }
 ```
 
 Commit the application's `Cargo.lock` to preserve the selected revision. Cargo builds the SDK and its workspace crates from that revision; GitHub release binaries are not installed automatically. Services-only applications need no playback host. Local Web playback requires a separately built or installed launcher and compatible engine, unless the application embeds the supervisor as described in [engine setup](engines.md).

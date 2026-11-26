@@ -16,7 +16,7 @@
 
 ```toml
 [dependencies]
-spotcore = { git = "https://github.com/TharukRenuja/SpotCore.git", tag = "v0.2.2" }
+spotcore = { git = "https://github.com/TharukRenuja/SpotCore.git", tag = "v0.2.3" }
 ```
 
 Pin a release tag or full commit and commit the application's `Cargo.lock` for reproducible builds. Add `features = ["native"]` for Soloist support. See [installation](docs/installation.md) for dependency options and runtime setup.

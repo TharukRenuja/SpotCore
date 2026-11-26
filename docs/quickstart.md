@@ -4,7 +4,7 @@
 
 ```toml
 [dependencies]
-spotcore = { git = "https://github.com/TharukRenuja/SpotCore.git", tag = "v0.2.2" }
+spotcore = { git = "https://github.com/TharukRenuja/SpotCore.git", tag = "v0.2.3" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
 ```
 
