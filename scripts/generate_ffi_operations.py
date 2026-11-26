@@ -57,7 +57,7 @@ def parse_params(text):
 
 def owned(kind):
     kind = kind.replace('spotcore_core::QueueItem', 'QueueItem')
-    return {'&str': 'String', '&[String]': 'Vec<String>', 'Option<&str>': 'Option<String>',
+    return {'crate::EqualizerPreset': 'spotcore::web::EqualizerPreset', '&str': 'String', '&[String]': 'Vec<String>', 'Option<&str>': 'Option<String>',
             'Option<&[u8]>': 'Option<Vec<u8>>', '&Device': 'Device', '&QueueSnapshot': 'QueueSnapshot', '&QueueItem': 'QueueItem', '&[QueueItem]': 'Vec<QueueItem>', 'impl Into<String>': 'String',
             'Duration': 'u64', 'Option<Duration>': 'Option<u64>'}.get(kind, kind)
 

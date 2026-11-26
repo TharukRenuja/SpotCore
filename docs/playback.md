@@ -116,7 +116,7 @@ Native `play()` and context replacement requests target the SDK-owned receiver t
 
 Spotify’s desktop application uses its local Core preferences for streaming quality and EQ, and its scrobble service for Private Session. These are separate from ordinary Connect playback commands. The presence of a preference key or quality enum does not establish that an external receiver exposes that control.
 
-The Soloist 1.3.10.34 command interface exposes playback, volume, shuffle, repeat and queue operations, but no Core preference or scrobble commands. This does not rule out Spotify’s device-settings HTTP transport. Its embedded `playback-settings.proto` defines `EQUALIZER_ENABLED` and six EQ gain fields, with boolean and float field values. It also defines `DeviceCapabilities.supported_audio_quality`. Receiver flags such as `use_playback_settings_equalizer` and `use_playback_settings_audio_quality` determine whether these paths are used; the schema alone does not establish that the running receiver enables them. SpotCore exposes receiver EQ preference reads and an enable-only toggle through `devices().equalizer()` and `devices().set_equalizer_enabled()`. These preserve band gains and confirm the stored enabled state; they do not measure audible processing or expose unverified gain conversions.
+The Soloist 1.3.10.34 command interface exposes playback, volume, shuffle, repeat and queue operations, but no Core preference or scrobble commands. This does not rule out Spotify’s device-settings HTTP transport. Its embedded `playback-settings.proto` defines `EQUALIZER_ENABLED` and six EQ gain fields, with boolean and float field values. It also defines `DeviceCapabilities.supported_audio_quality`. Receiver flags such as `use_playback_settings_equalizer` and `use_playback_settings_audio_quality` determine whether these paths are used; the schema alone does not establish that the running receiver enables them. SpotCore exposes receiver EQ preference reads, an enable-only toggle, six-band writes and built-in curves through `devices().equalizer()`, `set_equalizer_enabled()`, `set_equalizer_gains()` and `set_equalizer_preset()`. Band gains use dB in the range -12 through +12, ordered at 60, 150, 400, 1000, 2400 and 15000 Hz. Band and preset writes preserve the enabled state and confirm all six stored gains. A failed confirmation may leave a partial change; refresh before retrying. Stored readback does not measure audible processing.
 
 `users().set_private_session()` requires a compatible browser service; it is not a native receiver control. The device-settings `social_discoverable` field is not evidence of an equivalent native Private Session operation. Do not substitute discoverability or a browser-side change for confirmed native scrobble privacy.
 
@@ -188,3 +188,24 @@ Web player state reads return immediately with cached shuffle capabilities. Cont
 `Api::local_playback_state()` reads the local Web receiver independently of a mutable playback command. HTTP-only sessions return Unsupported. Use `devices().playback_state()` for the account's active Connect receiver instead.
 
 `SpotCore::play_items(context, uris, position)` starts an ordered list on this SDK's local receiver. `devices().play_items(target, context, uris, position)` targets an explicit Connect receiver. Items are sent in one inline context page, not as Add to queue commands, so another collection replaces this context's tail while genuine manual queue entries remain intact. Lists accept 1 to 1000 items.
+
+### Equalizer presets
+
+`spotcore::web::EqualizerPreset::ALL` lists the 22 built-in Spotify desktop curves. `preset.gains()` returns their six dB values. `settings.preset()` recognizes a stored curve and returns `None` for Manual. Spotify stores gains rather than a preset identity, so manually entering an exact built-in curve is indistinguishable from selecting that preset. Interfaces that must retain Manual after any band edit should keep that selection locally until a preset is explicitly selected or the session is refreshed.
+
+```rust,no_run
+# async fn example(api: &spotcore::web::Api, device: &spotcore::web::Device) -> Result<(), spotcore::Error> {
+let settings = api.devices()
+    .set_equalizer_preset(device, spotcore::web::EqualizerPreset::BassBooster)
+    .await?;
+assert_eq!(settings.preset(), Some(spotcore::web::EqualizerPreset::BassBooster));
+// A manual edit preserves whether EQ is enabled.
+let mut gains = settings.gains;
+gains[2] = 1.75;
+let manual = api.devices().set_equalizer_gains(device, gains).await?;
+assert_eq!(manual.preset(), None);
+# Ok(())
+# }
+```
+
+The gain representation was checked against Soloist 1.3.10.34 (Linux x86_64, SHA-256 `f891edd0acaed42a7893c735819430ef251b7f26b40170e1d89de89c670e7111`). Its migration from Core preferences divides the legacy signed integer by 2147483647, multiplies by 12 and clamps to -12 through +12 before writing the device-settings float fields. The desktop six-band preset coefficients and its legacy preference conversion agree with that mapping. This static evidence establishes units, not whether a particular receiver enables the processing path.

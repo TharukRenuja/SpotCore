@@ -59,6 +59,8 @@ Direct duration arguments (`position`, `amount`) are integer **milliseconds**. `
 | `devices.replace_queued` | `device: String, uris: Vec<String>` | `()` |
 | `devices.set_audio_quality` | `device: Device, quality: AudioQuality` | `AudioQuality` |
 | `devices.set_equalizer_enabled` | `device: Device, enabled: bool` | `EqualizerSettings` |
+| `devices.set_equalizer_gains` | `device: Device, gains: [f64; 6]` | `EqualizerSettings` |
+| `devices.set_equalizer_preset` | `device: Device, preset: spotcore::web::EqualizerPreset` | `EqualizerSettings` |
 | `devices.transfer` | `device_id: String, play: bool` | `Value` |
 
 ## Extras
