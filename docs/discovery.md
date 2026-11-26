@@ -43,7 +43,7 @@ async fn home(spotify: &SpotCore) -> Result<(), spotcore::Error> {
 }
 ```
 
-Home preserves greeting, filter chips, shelf order and raw data. Use returned facet IDs rather than inventing them. `section(uri, timezone, paging)` fetches shelf cards. `browse_page(uri, section_paging, item_paging)` pages browse shelves. `made_for_you` and `top_mixes` use Spotify section IDs that can change.
+Home preserves greeting, filter chips, shelf order and raw data. Browser-backed reads preserve nested card metadata and repeated shared title/artwork objects when crossing the bridge. Serialization bounds depth and object traversal, and removes actual recursive cycles; a repeated object on a separate branch is serialized again rather than replaced with null. This uses the same Spotify query, with no second discovery request or account-region substitution. Use returned facet IDs rather than inventing them. `section(uri, timezone, paging)` fetches shelf cards. `browse_page(uri, section_paging, item_paging)` pages browse shelves. `made_for_you` and `top_mixes` use Spotify section IDs that can change.
 
 `Page::next_offset` advances by raw rows, including unrecognized cards. Follow that offset instead of calculating it from the mapped item count. Unknown fields/cards remain available in raw responses. `Paging` accepts limits 1–100.
 

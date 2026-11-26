@@ -31,8 +31,9 @@ const services = {
   TokenProvider: {getToken:async()=>({accessToken:'secret',accessTokenExpirationTimestampMs:123,clientId:'client'})},
 };
 const registry = new Map(Object.keys(services).map(name=>[Symbol(name), services[name]]));
+let graphqlResult = null;
 const platform = {version:'test', getRegistry:()=>({_map:registry, resolve:key=>registry.get(key)}),
-  getGraphQLLoader:()=>async (def, variables)=>({data:{name:def.name, variables,track:{_uri:'spotify:track:test',data:{__typename:'Track',name:'Saved'}},_private:'hidden'}})};
+  getGraphQLLoader:()=>async (def, variables)=>graphqlResult || ({data:{name:def.name, variables,track:{_uri:'spotify:track:test',data:{__typename:'Track',name:'Saved'}},_private:'hidden'}})};
 const host = {querySelectorAll:()=>[], '__reactContainer$test':{memoizedProps:{value:platform}}};
 const context = vm.createContext({location:{origin:'https://open.spotify.com'},
   document:{getElementById:()=>host, createElement:()=>({canPlayType:()=>media.aac ? "probably" : ""})},
@@ -118,6 +119,37 @@ vm.runInContext(source, context);
   assert.equal(result.data.track.data.__typename, 'Track');
   assert.equal(result.data._private, undefined);
   assert.equal(result.data.variables.uri, 'spotify:track:id');
+  const sharedArt = {sources:[{url:'https://example.com/art',width:300}]};
+  const sharedTitle = {transformedLabel:'Music'};
+  const browseCard = uri => ({uri,content:{data:{data:{cardRepresentation:{title:sharedTitle,artwork:sharedArt}}}}});
+  graphqlResult = {data:{browseStart:{sections:{items:[{sectionItems:{items:[
+    browseCard('spotify:page:music'),browseCard('spotify:page:podcasts')
+  ]}}]}}}};
+  const browse = await bridge.call(null, 'gql.query', {name:'browseAll',hash:'a'});
+  const cards = browse.data.browseStart.sections.items[0].sectionItems.items;
+  for (const card of cards) {
+    assert.equal(card.content.data.data.cardRepresentation.title.transformedLabel,'Music');
+    assert.equal(card.content.data.data.cardRepresentation.artwork.sources[0].url,'https://example.com/art');
+  }
+  const cycle = {name:'kept'}; cycle.self = cycle;
+  graphqlResult = {data:{first:cycle,second:cycle}};
+  const cyclic = await bridge.call(null, 'gql.query', {name:'home',hash:'a'});
+  assert.equal(cyclic.data.first.name,'kept');
+  assert.equal(cyclic.data.second.name,'kept');
+  assert.equal(cyclic.data.first.self,null);
+  assert.equal(cyclic.data.second.self,null);
+  let deep = {name:'leaf'};
+  for(let i=0;i<100;i++)deep={child:deep};
+  graphqlResult = {data:deep};
+  const bounded = await bridge.call(null, 'gql.query', {name:'home',hash:'a'});
+  let branch=bounded.data,levels=0;
+  while(branch){branch=branch.child;levels++;}
+  assert.ok(levels<=65,'unbounded serialization depth');
+  graphqlResult = {data:Array.from({length:100005},()=>({title:'bounded'}))};
+  const wide = await bridge.call(null, 'gql.query', {name:'home',hash:'a'});
+  assert.equal(wide.data[0].title,'bounded');
+  assert.equal(wide.data.at(-1),null,'unbounded object traversal');
+  graphqlResult = null;
   const token = await bridge.call(null, 'token.get', {});
   assert.equal(token.accessToken, 'secret');
   assert.equal(token.appVersion, 'test');
