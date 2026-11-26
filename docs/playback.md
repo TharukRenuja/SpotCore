@@ -110,6 +110,8 @@ The separately cached executable is `spotcore-native` (`.exe` on Windows), with 
 
 `set_quality()` returns an applied preference, not measured stream fidelity. Web clamps Lossless/HiRes to VeryHigh. Native quality depends on device/account eligibility. A setting alone does not prove delivered bitrate. `audio_info()` reports Web `bitrate`, `mime` and `level`. Native audio diagnostics return `Unsupported` rather than reporting an inactive Web stream.
 
+Native `play()` and context replacement requests target the SDK-owned receiver through Connect HTTP, including sessions that use a hidden browser for services. They do not use the services browser’s local player or treat an enqueued Soloist WebSocket write as successful context replacement. A rejected HTTP request is returned to the caller without falling through to a second playback command. Pause, seek, volume and transport controls keep their existing routes; queue operations retain their HTTP/Jam scope rules. The new Play command can activate its explicit target without a separate preliminary transfer.
+
 ### Native control boundaries
 
 Spotify’s desktop application uses its local Core preferences for streaming quality and EQ, and its scrobble service for Private Session. These are separate from ordinary Connect playback commands. The presence of a preference key or quality enum does not establish that an external receiver exposes that control.

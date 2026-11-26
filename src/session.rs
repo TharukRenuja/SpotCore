@@ -784,6 +784,14 @@ impl Backend for SessionBackend {
                 return self.web.api().queues().execute(command).await;
             }
             #[cfg(feature = "native")]
+            if matches!(command, Command::Load(_) | Command::PlayContext { .. })
+                && let Some(native) = &self.native
+            {
+                // Context replacement belongs to Connect, even when a browser supplies services.
+                let device = crate::spotify::native_device(self.web.api(), native).await?;
+                return self.web.dispatch_on(&device.id, command).await;
+            }
+            #[cfg(feature = "native")]
             {
                 if self.native.is_some()
                     && (web_control(&command)
@@ -1228,15 +1236,32 @@ mod tests {
         sdk.player.backend_mut().set_native(native);
         sdk.refresh_state().await.unwrap();
         assert_eq!(sdk.state().unwrap().capabilities, sdk.capabilities());
-        sdk.play(super::test_browser::TRACK).await.unwrap();
+        // A failed HTTP authentication must not fall through to a successful native send
+        // or start the hidden browser's player.
+        browser.response.lock().unwrap()["token"] = json!({});
+        assert!(matches!(
+            sdk.play(super::test_browser::TRACK).await,
+            Err(Error::NotAuthenticated)
+        ));
+        assert!(matches!(
+            sdk.play_context("spotify:playlist:selection", None, None, None)
+                .await,
+            Err(Error::NotAuthenticated)
+        ));
+        browser
+            .response
+            .lock()
+            .unwrap()
+            .as_object_mut()
+            .unwrap()
+            .remove("token");
+        assert!(commands.try_recv().is_err());
         sdk.pause().await.unwrap();
-        for expected in ["play", "pause"] {
-            let command = tokio::time::timeout(Duration::from_secs(1), commands.recv())
-                .await
-                .unwrap()
-                .unwrap();
-            assert_eq!(command["command"], expected);
-        }
+        let command = tokio::time::timeout(Duration::from_secs(1), commands.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(command["command"], "pause");
         assert!(
             !browser
                 .calls
