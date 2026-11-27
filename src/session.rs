@@ -6,6 +6,9 @@ use crate::{
 };
 use std::time::Duration;
 
+#[cfg(feature = "native")]
+pub(crate) const DEFAULT_NATIVE_PAIRING_TIMEOUT: Duration = Duration::from_secs(60);
+
 /// A Web session with optional, separately installed Soloist playback.
 pub struct SpotCore {
     pub api: Api,
@@ -536,6 +539,7 @@ impl SpotCore {
         paths: &crate::Paths,
         name: Option<&str>,
         allow_pairing: bool,
+        pairing_timeout: Duration,
     ) {
         let result = async {
             let account = self.api.users().me().await?;
@@ -569,7 +573,7 @@ impl SpotCore {
                     key.clone(),
                     paths,
                     device_name,
-                    Duration::from_secs(180),
+                    pairing_timeout,
                 )
                 .await;
                 native = crate::native::NativeBackend::launch_as(

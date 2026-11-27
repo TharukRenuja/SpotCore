@@ -15,6 +15,8 @@ pub struct AccountManager {
     prefer_native: bool,
     #[cfg(feature = "native")]
     allow_native_pairing: bool,
+    #[cfg(feature = "native")]
+    native_pairing_timeout: Option<std::time::Duration>,
 }
 
 struct SessionLease(File);
@@ -53,6 +55,8 @@ impl AccountManager {
             prefer_native: true,
             #[cfg(feature = "native")]
             allow_native_pairing: false,
+            #[cfg(feature = "native")]
+            native_pairing_timeout: None,
         })
     }
 
@@ -66,6 +70,13 @@ impl AccountManager {
     #[cfg(feature = "native")]
     pub fn native_pairing(&mut self, enabled: bool) {
         self.allow_native_pairing = enabled;
+    }
+
+    /// Overrides the official-app pairing window (60 seconds by default).
+    /// This does not enable pairing; call `native_pairing(true)` for explicit setup.
+    #[cfg(feature = "native")]
+    pub fn native_pairing_timeout(&mut self, timeout: std::time::Duration) {
+        self.native_pairing_timeout = Some(timeout);
     }
 
     pub fn application_name(mut self, name: impl Into<String>) -> Self {
@@ -288,6 +299,9 @@ impl AccountManager {
         #[cfg(feature = "native")]
         {
             builder = builder.native_pairing(self.allow_native_pairing);
+            if let Some(timeout) = self.native_pairing_timeout {
+                builder = builder.native_pairing_timeout(timeout);
+            }
         }
         if let Some(name) = &self.device_name {
             builder = builder.device_name(name.clone());
@@ -409,6 +423,8 @@ impl AccountManager {
                         &paths,
                         self.device_name.as_deref(),
                         self.allow_native_pairing,
+                        self.native_pairing_timeout
+                            .unwrap_or(crate::session::DEFAULT_NATIVE_PAIRING_TIMEOUT),
                     )
                     .await;
             }
@@ -579,11 +595,26 @@ mod tests {
         let paths = Paths::new(std::env::temp_dir().join("spotcore-pairing-opt-in"));
         let mut manager = AccountManager::new(paths.clone()).unwrap();
         assert!(!manager.allow_native_pairing);
+        assert!(manager.native_pairing_timeout.is_none());
+        manager.native_pairing_timeout(std::time::Duration::from_secs(180));
+        assert_eq!(
+            manager.native_pairing_timeout,
+            Some(std::time::Duration::from_secs(180))
+        );
+        assert!(
+            !manager.allow_native_pairing,
+            "setting a timeout must not enable pairing"
+        );
         manager.native_pairing(true);
         assert!(manager.allow_native_pairing);
         manager.native_pairing(false);
         assert!(!manager.allow_native_pairing);
-        assert!(!AccountManager::new(paths).unwrap().allow_native_pairing);
+        let fresh = AccountManager::new(paths).unwrap();
+        assert!(!fresh.allow_native_pairing);
+        assert!(
+            fresh.native_pairing_timeout.is_none(),
+            "the timeout is not an account preference"
+        );
     }
 
     #[test]

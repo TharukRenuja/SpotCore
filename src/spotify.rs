@@ -248,6 +248,30 @@ mod quality_tests {
 mod builder_tests {
     use super::*;
 
+    #[cfg(feature = "native")]
+    #[test]
+    fn pairing_timeout_is_an_explicit_override_not_pairing_permission() {
+        let builder = super::SpotCoreBuilder::new();
+        assert_eq!(
+            builder
+                .native_pairing_timeout
+                .unwrap_or(crate::session::DEFAULT_NATIVE_PAIRING_TIMEOUT),
+            std::time::Duration::from_secs(60)
+        );
+        let builder = builder.native_pairing_timeout(std::time::Duration::from_secs(180));
+        assert_eq!(
+            builder.native_pairing_timeout,
+            Some(std::time::Duration::from_secs(180))
+        );
+        assert!(!builder.allow_native_pairing);
+        let copied = builder.clone().native_pairing(true);
+        assert!(copied.allow_native_pairing);
+        assert_eq!(
+            copied.native_pairing_timeout,
+            builder.native_pairing_timeout
+        );
+    }
+
     #[tokio::test]
     async fn service_startup_needs_no_browser_or_native_runtime() {
         let paths = Paths::new(
@@ -298,6 +322,8 @@ pub struct SpotCoreBuilder {
     native_credentials: Option<crate::SoloistCredentials>,
     #[cfg(feature = "native")]
     allow_native_pairing: bool,
+    #[cfg(feature = "native")]
+    native_pairing_timeout: Option<std::time::Duration>,
     device_name: Option<String>,
     web_credentials: Option<crate::WebCredentials>,
 }
@@ -333,6 +359,14 @@ impl SpotCoreBuilder {
     #[cfg(feature = "native")]
     pub fn native_pairing(mut self, enabled: bool) -> Self {
         self.allow_native_pairing = enabled;
+        self
+    }
+
+    /// Overrides the official-app pairing window (60 seconds by default).
+    /// Pairing remains disabled unless `native_pairing(true)` is also supplied.
+    #[cfg(feature = "native")]
+    pub fn native_pairing_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.native_pairing_timeout = Some(timeout);
         self
     }
 
@@ -399,6 +433,8 @@ impl SpotCoreBuilder {
                 &paths,
                 self.device_name.as_deref(),
                 self.allow_native_pairing,
+                self.native_pairing_timeout
+                    .unwrap_or(crate::session::DEFAULT_NATIVE_PAIRING_TIMEOUT),
             )
             .await;
         }
@@ -435,14 +471,24 @@ impl SpotCoreBuilder {
         let role = self.role;
         #[cfg(feature = "native")]
         let allow_pairing = self.allow_native_pairing;
+        #[cfg(feature = "native")]
+        let pairing_timeout = self
+            .native_pairing_timeout
+            .unwrap_or(crate::session::DEFAULT_NATIVE_PAIRING_TIMEOUT);
         let web = self.launch_web().await?;
         let sdk = SpotCore::from_web(web);
         #[cfg(feature = "native")]
         let mut sdk = sdk;
         #[cfg(feature = "native")]
         if let Some(credentials) = native {
-            sdk.try_native(credentials, &paths, name.as_deref(), allow_pairing)
-                .await;
+            sdk.try_native(
+                credentials,
+                &paths,
+                name.as_deref(),
+                allow_pairing,
+                pairing_timeout,
+            )
+            .await;
         }
         if role == crate::web::BrowserRole::Playback
             && sdk.playback_mode() == crate::PlaybackMode::Web

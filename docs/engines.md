@@ -106,4 +106,16 @@ Cookie renewal caches the public token-bootstrap recipe, client version and buil
 
 ## First Native pairing
 
-Explicit Native setup allows up to three minutes to pair in Spotify’s mobile or desktop app, then up to one minute to authenticate the restarted receiver. A pairing-process error is followed by verification of the saved session rather than treated as conclusive on its own. Local authentication events can complete verification while an HTTP discovery or activation request is pending. Activation is never replayed, and the receiver must still be found unambiguously in the signed-in account before Native playback is accepted. Ordinary account restoration never starts interactive pairing.
+Explicit Native setup allows 60 seconds by default to pair in Spotify’s mobile or desktop app, then up to one minute to authenticate the restarted receiver. SDK consumers can override the pairing window with `SpotCoreBuilder::native_pairing_timeout(Duration)` or `AccountManager::native_pairing_timeout(Duration)`. Setting a duration does not enable pairing; `native_pairing(true)` remains a separate, explicit opt-in. A pairing-process error is followed by verification of the saved session rather than treated as conclusive on its own. Local authentication events can complete verification while an HTTP discovery or activation request is pending. Activation is never replayed, and the receiver must still be found unambiguously in the signed-in account before Native playback is accepted. Ordinary account restoration never starts interactive pairing.
+
+For example, an application can allow three minutes for its setup screen without changing other consumers’ default:
+
+```rust
+use std::time::Duration;
+
+let builder = spotcore::SpotCore::builder()
+    .native_pairing(true)
+    .native_pairing_timeout(Duration::from_secs(180));
+```
+
+The override applies to the pairing attempt, not binary download, post-pair verification or ordinary device readiness. It is runtime configuration and is not saved as an account preference.
