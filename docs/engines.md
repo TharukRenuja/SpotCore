@@ -103,3 +103,7 @@ For diagnosis, `headless(false)`, `no_cuts(true)` and `WebPlayerOptions { minima
 Cookie renewal caches the public token-bootstrap recipe, client version and build version in `cache/cookie-bootstrap.json` under the API data root. Records are bounded to 8 KiB, expire after 24 hours, and are rediscovered if Spotify rejects the recipe. The file contains no user cookies or access tokens. Writes are atomic and run on the blocking pool. Missing or invalid caches use discovery.
 
 `AccountManager::switch_to_with_services` accepts an early HTTP API clone, reuses its renewal/client-token state, and still verifies account identity before selecting it. Read-only GraphQL queries can retry once after a rejected token; mutations are not automatically replayed. Late 401 responses do not invalidate a newer token obtained by another request.
+
+## First Native pairing
+
+Explicit Native setup allows up to three minutes to pair in Spotify’s mobile or desktop app, then up to one minute to authenticate the restarted receiver. A pairing-process error is followed by verification of the saved session rather than treated as conclusive on its own. Local authentication events can complete verification while an HTTP discovery or activation request is pending. Activation is never replayed, and the receiver must still be found unambiguously in the signed-in account before Native playback is accepted. Ordinary account restoration never starts interactive pairing.

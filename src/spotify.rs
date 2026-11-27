@@ -150,14 +150,14 @@ pub(crate) async fn native_device(
         .ok_or_else(|| Error::Backend("native quality needs a launched device name".into()))?;
     // The daemon registers with Connect shortly after its session opens.
     let mut last_error = None;
-    for _ in 0..20 {
+    for _ in 0..30 {
         let devices = api.devices().list().await?;
         match named_device(devices, name) {
             Ok(Some(device)) => return Ok(device),
             Ok(None) => {}
             Err(error) => last_error = Some(error),
         }
-        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     }
     Err(last_error.unwrap_or_else(|| {
         Error::Backend(format!(

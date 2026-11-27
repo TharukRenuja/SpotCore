@@ -565,20 +565,24 @@ impl SpotCore {
                     .unwrap_or(crate::native::DEFAULT_DEVICE_NAME)
                     .to_owned();
                 native.shutdown().await?;
-                crate::native::NativeBackend::pair_with(
+                let pairing = crate::native::NativeBackend::pair_with(
                     key.clone(),
                     paths,
                     device_name,
-                    Duration::from_secs(60),
+                    Duration::from_secs(180),
                 )
-                .await?;
+                .await;
                 native = crate::native::NativeBackend::launch_as(
                     key,
                     paths,
                     name.unwrap_or(crate::native::DEFAULT_DEVICE_NAME),
                 )
                 .await?;
-                authenticate_native(&self.api, &native, Duration::from_secs(10)).await?;
+                if let Err(verification) =
+                    authenticate_native(&self.api, &native, Duration::from_secs(60)).await
+                {
+                    return Err(pairing.err().unwrap_or(verification));
+                }
             }
             // Registration in this Web account prevents controlling another account's daemon.
             let device = crate::spotify::native_device(&self.api, &native).await?;
@@ -604,7 +608,7 @@ async fn authenticate_native(
 ) -> Result<(), Error> {
     let deadline = tokio::time::Instant::now() + timeout;
     let mut pending_operation = None;
-    let result = tokio::time::timeout_at(deadline, async {
+    let verification = tokio::time::timeout_at(deadline, async {
         loop {
             if native.authentication_state()? {
                 return Ok(());
@@ -641,16 +645,27 @@ async fn authenticate_native(
             }
             tokio::time::sleep(Duration::from_millis(250)).await;
         }
-    })
-    .await;
-    match result.unwrap_or(Err(Error::Timeout)) {
-        Err(Error::Timeout) => match (native.authentication_state(), pending_operation) {
-            (Err(error), _) => Err(error),
+    });
+    let result = tokio::select! {
+        biased;
+        authenticated = native.wait_authenticated(timeout) => {
+            if authenticated { Ok(()) } else { Err(Error::Timeout) }
+        }
+        result = verification => result.unwrap_or(Err(Error::Timeout)),
+    };
+    match result {
+        Ok(()) => Ok(()),
+        Err(error) => match (native.authentication_state(), pending_operation) {
+            (Err(actual), _) => Err(actual),
             (Ok(true), _) => Ok(()),
-            (Ok(false), Some(operation)) => Err(Error::NativeStartupTimeout(operation)),
-            (Ok(false), None) => Err(Error::NativeAuthenticationRequired),
+            (Ok(false), Some(operation)) if error == Error::Timeout => {
+                Err(Error::NativeStartupTimeout(operation))
+            }
+            (Ok(false), None) if error == Error::Timeout => {
+                Err(Error::NativeAuthenticationRequired)
+            }
+            _ => Err(error),
         },
-        result => result,
     }
 }
 
@@ -1102,6 +1117,13 @@ mod tests {
                 "Test native",
                 true,
                 false,
+                Some("ConnectTransferAPI"),
+                Ok(()),
+            ),
+            (
+                "Test native",
+                true,
+                false,
                 Some("ConnectDevicesAPI"),
                 Ok(()),
             ),
@@ -1166,10 +1188,20 @@ mod tests {
             if initially_authenticated {
                 assert!(native.wait_authenticated(Duration::from_secs(1)).await);
             }
-            assert_eq!(
-                authenticate_native(&api, &native, Duration::from_millis(200)).await,
-                expected
-            );
+            let started = tokio::time::Instant::now();
+            let pending_but_confirmed = confirm && hold.is_some();
+            let timeout = if pending_but_confirmed {
+                Duration::from_secs(2)
+            } else {
+                Duration::from_millis(200)
+            };
+            assert_eq!(authenticate_native(&api, &native, timeout).await, expected);
+            if pending_but_confirmed {
+                assert!(
+                    started.elapsed() < Duration::from_secs(1),
+                    "local authentication must not wait for a stalled HTTP operation"
+                );
+            }
             let calls = browser.calls.lock().unwrap();
             let transfers: Vec<_> = calls
                 .iter()
